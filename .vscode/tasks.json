@@ -1,0 +1,14 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Zotero-LLM",
+			"type": "shell",
+			"command": "python",
+			"args": [
+				"zotero_llm/main.py"
+			],
+			"group": "build"
+		}
+	]
+}

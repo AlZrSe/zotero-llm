@@ -11,12 +11,8 @@ This project provides a simple yet powerful integration between Zotero and LLMs 
 
 ## Setup
 
-1. Run a Zotero Desktop.
-2. Create a `.env` file with your credentials:
-```
-OPENAI_API_KEY=your_openai_api_key
-LLM_BASE_URL=http://localhost:8080/v1
-```
+1. Run a Zotero Desktop. Go to Edit > Settings > Advanced and check "Allow other application on this computer communicate with Zotero".
+2. Copy `.env.example` to `.env` file and edit with your credentials.
 
 3. Install dependencies:
 ```bash

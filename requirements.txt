@@ -4,3 +4,4 @@ pyzotero
 colorama>=0.4.6
 rich>=13.0.0
 requests>=2.31.0
+qdrant-client[fastembed]>=1.14.2

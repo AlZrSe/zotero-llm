@@ -59,3 +59,21 @@ def upload_documents(client, documents, collection_name=collection_name_PR_zoter
         print(f"Uploaded {len(documents)} documents to collection '{collection_name}'")
     except Exception as e:
         print(f"Error uploading documents: {e}")
+
+def search_documents(client, query, collection_name=collection_name_PR_zotero, limit=5):
+    """Search for documents in a specific collection using a query."""
+    try:
+        results = client.query_points(
+            collection_name=collection_name,
+            query=models.Document(
+                text=query,
+                model="Qdrant/bm25",
+            ),
+            using="bm25",
+            limit=limit,
+            with_payload=True,
+        )
+        return [result.payload for result in results.points]
+    except Exception as e:
+        print(f"Error searching documents: {e}")
+        return []

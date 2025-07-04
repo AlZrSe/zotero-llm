@@ -7,6 +7,7 @@ from rich.prompt import Prompt
 from rich.panel import Panel
 from zotero import *
 from rag import *
+from llm import *
 
 console = Console()
 
@@ -28,56 +29,6 @@ def setup_credentials():
         'llm_model': os.getenv('LLM_MODEL', 'gpt-4.1-mini'),
         'embedding_model': os.getenv('EMBEDDING_MODEL', 'Qwen/Qwen3-Embedding-8B')
     }
-
-def analyze_papers(zot, query, credentials):
-    """Analyze papers from local Zotero library using LLM"""
-    try:
-        items = zot.items(limit=5, sort='dateModified', direction='desc')
-    except Exception as e:
-        console.print(f"[red]Failed to connect to local Zotero: {e}")
-        return "Could not fetch items from local Zotero."
-
-    # Prepare context for LLM
-    papers_context = []
-    for item in items:
-        data = item.get('data', item)
-        if data.get('title'):
-            context = {
-                'title': data.get('title', ''),
-                'abstract': data.get('abstractNote', ''),
-                'authors': data.get('creators', []),
-                'year': data.get('date', '')
-            }
-            papers_context.append(context)
-    
-    # Prepare prompt for LLM
-    system_prompt = """You are a research assistant analyzing academic papers.
-    Based on the provided papers and query, provide insights and suggestions."""
-    
-    user_prompt = f"""Query: {query}
-    
-    Papers:
-    {papers_context}
-    
-    Please provide:
-    1. Key insights related to the query
-    2. Connections between papers
-    3. Suggestions for further research"""
-    
-    # Call OpenAI API
-    client = openai.OpenAI(api_key=credentials['openai_api_key'],
-                           base_url=credentials['llm_base_url'])
-    response = client.chat.completions.create(
-        model=credentials['llm_model'],
-        extra_query={"provider": "OpenaiChat"},
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-    )
-    
-    return response.choices[0].message.content
-
 
 def main():
     """Main function to run the Zotero-LLM integration"""
@@ -104,8 +55,19 @@ def main():
         return
     console.print("[green]Connected to local Qdrant server successfully![/green]")
 
-    # Check if collection exists
-    collections = rag.get_collections()
+    # Initialize LLM client
+    try:
+        llm_client = openai.OpenAI(api_key=credentials['openai_api_key'],
+                                    base_url=credentials['llm_base_url'])
+        # Test connection by fetching models
+        llm_client.models.list()
+    except Exception as e:
+        console.print(f"[red]Failed to connect to LLM: {e}[/red]")
+        return
+    console.print("[green]Connected to LLM successfully![/green]")
+
+    # Check if main zotero collection exists:
+    collections = [collection.name for collection in rag.get_collections().collections]
     if collection_name_PR_zotero not in collections:
         console.print(f"[yellow]Collection '{collection_name_PR_zotero}' does not exist. Creating it...[/yellow]")
         upload_documents(rag, fetch_all_items(zot), collection_name_PR_zotero, 
@@ -123,8 +85,11 @@ def main():
         
         with console.status("[bold green]Analyzing papers..."):
             try:
-                analysis = analyze_papers(zot, query, credentials)
-                console.print(Panel(analysis, title="📚 Analysis Results"))
+                # analysis = analyze_papers(zot, query, credentials)
+                context = search_documents(rag, query, collection_name_PR_zotero)
+                # console.print(Panel(context, title="📚 Analysis Results"))
+                analysis = ask_llm(query, context, llm_client, credentials)
+                console.print(Panel(analysis, title="💡 LLM Insights"))
             except Exception as e:
                 console.print(f"[red]Error during analysis: {str(e)}")
         

@@ -54,17 +54,13 @@ def ask_llm(query, zotero_list, llm_client, credentials):
 
      # Prepare prompt for LLM
     system_prompt = """You are a research assistant analyzing academic papers.
-    Based on the provided papers and query, provide insights and suggestions."""
-    
+    Based on the provided papers and query, provide useful thoughts, summary, insights and suggestions.
+    Also, provide a citations as number in square brackets with a reference list of the papers used at the end of your response."""
+
     user_prompt = f"""Query: {query}
     
     Papers:
-    {context}
-    
-    Please provide:
-    1. Key insights related to the query
-    2. Connections between papers
-    3. Suggestions for further research"""
+    {context}"""
 
     response = llm_client.chat.completions.create(
         model='auto', # credentials['llm_model'],

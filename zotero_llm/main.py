@@ -11,6 +11,8 @@ from llm import *
 
 console = Console()
 
+LLM_LOG = "zotero_llm.log"
+
 def setup_credentials():
     """Load credentials from .env file"""
     load_dotenv()
@@ -90,6 +92,8 @@ def main():
                 # console.print(Panel(context, title="📚 Analysis Results"))
                 analysis = ask_llm(query, context, llm_client, credentials)
                 console.print(Panel(analysis, title="💡 LLM Insights"))
+                with open(LLM_LOG, 'a', encoding='utf-8') as log_file:
+                    log_file.write(f"Query: {query}\nResponse: {analysis}\n\n\n")
             except Exception as e:
                 console.print(f"[red]Error during analysis: {str(e)}")
         

@@ -17,7 +17,7 @@ def setup_credentials():
     """Load credentials from .env file"""
     load_dotenv()
     
-    required_vars = ['OPENAI_API_KEY', 'LLM_MODEL']
+    required_vars = ['OPENAI_API_KEY', 'LLM_MODEL', 'LLM_BASE_URL']
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     
     if missing_vars:
@@ -49,14 +49,6 @@ def main():
         return
     console.print("[green]Connected to local Zotero library successfully![/green]")
 
-    rag = get_qdrant_client()
-    try:
-        rag.get_collections()  # Test connection
-    except Exception as e:
-        console.print(f"[red]Failed to connect to Qdrant: {e}[/red]")
-        return
-    console.print("[green]Connected to local Qdrant server successfully![/green]")
-
     # Initialize LLM client
     try:
         llm_client = openai.OpenAI(api_key=credentials['openai_api_key'],
@@ -68,12 +60,28 @@ def main():
         return
     console.print("[green]Connected to LLM successfully![/green]")
 
+    rag = get_qdrant_client()
+    try:
+        rag.get_collections()  # Test connection
+    except Exception as e:
+        console.print(f"[red]Failed to connect to Qdrant: {e}[/red]")
+        return
+    console.print("[green]Connected to local Qdrant server successfully![/green]")
+
+    embedding_model_name = credentials['embedding_model'].split(':')[0]
+    embedding_model_size = int(credentials['embedding_model'].split(':')[1])
+
+    embedding_model = SentenceTransformer(
+        embedding_model_name,
+        model_kwargs={"device_map": "auto"},
+        tokenizer_kwargs={"padding_side": "left"},
+    )
+
     # Check if main zotero collection exists:
     collections = [collection.name for collection in rag.get_collections().collections]
     if collection_name_PR_zotero not in collections:
         console.print(f"[yellow]Collection '{collection_name_PR_zotero}' does not exist. Creating it...[/yellow]")
-        upload_documents(rag, fetch_all_items(zot), collection_name_PR_zotero, 
-                         embedding_model=credentials['embedding_model'])
+        upload_documents(rag, fetch_all_items(zot), collection_name_PR_zotero)
         console.print(f"[green]Collection '{collection_name_PR_zotero}' created successfully![/green]")
     else:
         console.print(f"[blue]Collection '{collection_name_PR_zotero}' already exists.[/blue]")

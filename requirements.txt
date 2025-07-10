@@ -5,3 +5,6 @@ colorama>=0.4.6
 rich>=13.0.0
 requests>=2.31.0
 qdrant-client[fastembed]>=1.14.2
+transformers>=4.51.0
+sentence-transformers>=2.7.0
+accelerate

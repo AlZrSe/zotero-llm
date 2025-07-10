@@ -1,6 +1,11 @@
 from qdrant_client import QdrantClient, models
+from sentence_transformers import SentenceTransformer
 
 collection_name_PR_zotero = "zotero_llm_abstracts"
+
+embedding_model_name = "Qwen/Qwen3-Embedding-8B"
+embedding_model_size = 4096  # Default size for Qwen3-Embedding-8B
+model = None
 
 def get_qdrant_client():
     """Return a Qdrant client configured for the local Qdrant server."""
@@ -20,9 +25,9 @@ def get_all_collections(client):
         print(f"Error fetching collections: {e}")
         return None
     
-def upload_documents(client, documents, collection_name=collection_name_PR_zotero,
-                     embedding_model="Qwen/Qwen3-Embedding-8B:4096"):
+def upload_documents(client, documents, collection_name=collection_name_PR_zotero):
     """Upload documents to a specific collection in Qdrant."""
+
     try:
         client.create_collection(
             collection_name=collection_name,
@@ -31,22 +36,27 @@ def upload_documents(client, documents, collection_name=collection_name_PR_zoter
                     modifier=models.Modifier.IDF,
                 )
             },
-            # vectors_config=models.VectorParams(
-            #     size=int(embedding_model.split(':')[1]),  # Dimensionality of the vectors
-            #     distance=models.Distance.COSINE  # Distance metric for similarity search
-            # )
+            vectors_config={
+                'qwen': models.VectorParams(
+                    size=embedding_model_size,  # Dimensionality of the vectors
+                    distance=models.Distance.COSINE  # Distance metric for similarity search
+                )
+            }
         )
         print(f"Collection '{collection_name}' created successfully.")
+
+        docs = [f'Title: {doc['title']}\nAbstract: {doc['abstract']}' for doc in documents if doc['title'] != '' or doc['abstract'] != '']
+
+        document_embeddings = model.encode(docs)
 
         # Prepare documents for upload
         points = [
             models.PointStruct(
                 id=i,
-                # vector=models.Document(text=f'Title: {doc['title']}\nAbstract: {doc['abstract']}',
-                #                        model=embedding_model.split(':')[0]),
                 vector={
+                    "qwen": document_embeddings[i],
                     "bm25": models.Document(
-                        text=f'Title: {doc['title']}\nAbstract: {doc['abstract']}\nKeywords: {", ".join(doc.get("keywords", []))}', 
+                        text=f'Title: {doc['title']}\nAbstract: {doc['abstract']}\nKeywords: {", ".join(doc.get("keywords", []))}',
                         model="Qdrant/bm25",
                     ),
                 },
@@ -65,6 +75,13 @@ def search_documents(client, query, collection_name=collection_name_PR_zotero, l
     try:
         results = client.query_points(
             collection_name=collection_name,
+            prefetch=[
+                models.Prefetch(
+                    query=model.encode(query),
+                    using="qwen",
+                    limit=limit * 10,
+                )
+            ],
             query=models.Document(
                 text=query,
                 model="Qdrant/bm25",

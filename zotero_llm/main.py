@@ -1,7 +1,5 @@
 from dotenv import load_dotenv
 import os
-import requests
-import openai
 from rich.console import Console
 from rich.prompt import Prompt
 from rich.panel import Panel
@@ -28,7 +26,7 @@ def setup_credentials():
     return {
         'openai_api_key': os.getenv('OPENAI_API_KEY'),
         'llm_base_url': os.getenv('LLM_BASE_URL', 'https://api.openai.com/v1'),
-        'llm_model': os.getenv('LLM_MODEL', 'gpt-4.1-mini'),
+        'llm_model': os.getenv('LLM_MODEL'),
         'embedding_model': os.getenv('EMBEDDING_MODEL', 'Qwen/Qwen3-Embedding-8B')
     }
 
@@ -58,15 +56,23 @@ def main():
     console.print("[green]Connected to local Qdrant server successfully![/green]")
 
     # Initialize LLM client
-    try:
-        llm_client = openai.OpenAI(api_key=credentials['openai_api_key'],
-                                    base_url=credentials['llm_base_url'])
-        # Test connection by fetching models
-        llm_client.models.list()
-    except Exception as e:
-        console.print(f"[red]Failed to connect to LLM: {e}[/red]")
-        return
-    console.print("[green]Connected to LLM successfully![/green]")
+    # try:
+    # if credentials['openai_api_key']:
+    #     llm_client = openai.OpenAI(api_key=credentials['openai_api_key'],
+    #                                 base_url=credentials['llm_base_url'])
+    #     # Test connection by fetching models
+    #     llm_client.models.list()
+    # elif credentials['mistral_api_key']:
+    #     llm_client = Mistral(api_key=credentials['mistral_api_key'])
+    #     # Test connection
+    #     llm_client.models.list()
+    # else:
+    #     console.print("[red]No valid LLM credentials found. Please set OPENAI_API_KEY or MISTRAL_API_KEY in .env file.[/red]")
+    #     return
+    # # except Exception as e:
+    # #     console.print(f"[red]Failed to connect to LLM: {e}[/red]")
+    # #     return
+    # console.print("[green]Connected to LLM successfully![/green]")
 
     # Check if main zotero collection exists:
     collections = [collection.name for collection in rag.get_collections().collections]
@@ -90,7 +96,7 @@ def main():
                 # analysis = analyze_papers(zot, query, credentials)
                 context = search_documents(rag, query, collection_name_PR_zotero)
                 # console.print(Panel(context, title="📚 Analysis Results"))
-                analysis = ask_llm(query, context, llm_client, credentials)
+                analysis = ask_llm(query, context, credentials['llm_model'])
                 console.print(Panel(analysis, title="💡 LLM Insights"))
                 with open(LLM_LOG, 'a', encoding='utf-8') as log_file:
                     log_file.write(f"Query: {query}\nResponse: {analysis}\n\n\n")

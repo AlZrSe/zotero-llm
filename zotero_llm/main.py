@@ -15,7 +15,7 @@ def setup_credentials():
     """Load credentials from .env file"""
     load_dotenv()
     
-    required_vars = ['OPENAI_API_KEY', 'LLM_MODEL', 'LLM_BASE_URL']
+    required_vars = ['OPENAI_API_KEY', 'LLM_MODEL', 'EMBEDDING_MODEL']
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     
     if missing_vars:
@@ -73,15 +73,6 @@ def main():
         console.print(f"[red]Failed to connect to Qdrant: {e}[/red]")
         return
     console.print("[green]Connected to local Qdrant server successfully![/green]")
-
-    embedding_model_name = credentials['embedding_model'].split(':')[0]
-    embedding_model_size = int(credentials['embedding_model'].split(':')[1])
-
-    embedding_model = SentenceTransformer(
-        embedding_model_name,
-        model_kwargs={"device_map": "auto"},
-        tokenizer_kwargs={"padding_side": "left"},
-    )
 
     # Check if main zotero collection exists:
     collections = [collection.name for collection in rag.get_collections().collections]

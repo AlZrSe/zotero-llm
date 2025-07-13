@@ -1,11 +1,8 @@
 from qdrant_client import QdrantClient, models
-from sentence_transformers import SentenceTransformer
+from litellm import embedding
+from ratelimit import limits
 
 collection_name_PR_zotero = "zotero_llm_abstracts"
-
-embedding_model_name = "Qwen/Qwen3-Embedding-8B"
-embedding_model_size = 4096  # Default size for Qwen3-Embedding-8B
-model = None
 
 def get_qdrant_client():
     """Return a Qdrant client configured for the local Qdrant server."""
@@ -25,8 +22,22 @@ def get_all_collections(client):
         print(f"Error fetching collections: {e}")
         return None
     
-def upload_documents(client, documents, collection_name=collection_name_PR_zotero):
+@limits(calls=1, period=1, raise_on_limit=False)
+def get_embedding(text, model='mistral/mistral-embed:1024'):
+    """Get embedding for a given text using the specified model."""
+    try:
+        embedding_model_name = model.split(':')[0]
+        response = embedding(model=embedding_model_name, input=[text])
+        return response['data'][0]['embedding'] if response and 'data' in response and len(response['data']) > 0 else None
+    except Exception as e:
+        print(f"Error getting embedding: {e}")
+        return None
+    
+def upload_documents(client, documents, collection_name=collection_name_PR_zotero, embedding_model='mistral/mistral-embed:1024'):
     """Upload documents to a specific collection in Qdrant."""
+    
+    embedding_model_name = embedding_model.split(':')[0]
+    embedding_model_size = int(embedding_model.split(':')[1])
 
     try:
         client.create_collection(
@@ -37,7 +48,7 @@ def upload_documents(client, documents, collection_name=collection_name_PR_zoter
                 )
             },
             vectors_config={
-                'qwen': models.VectorParams(
+                'semantic': models.VectorParams(
                     size=embedding_model_size,  # Dimensionality of the vectors
                     distance=models.Distance.COSINE  # Distance metric for similarity search
                 )
@@ -47,14 +58,15 @@ def upload_documents(client, documents, collection_name=collection_name_PR_zoter
 
         docs = [f'Title: {doc['title']}\nAbstract: {doc['abstract']}' for doc in documents if doc['title'] != '' or doc['abstract'] != '']
 
-        document_embeddings = model.encode(docs)
-
         # Prepare documents for upload
         points = [
             models.PointStruct(
                 id=i,
                 vector={
-                    "qwen": document_embeddings[i],
+                    "semantic": models.Document(
+                        text=f'Title: {doc['title']}\nAbstract: {doc['abstract']}',
+                        model=embedding_model_name,
+                    ),
                     "bm25": models.Document(
                         text=f'Title: {doc['title']}\nAbstract: {doc['abstract']}\nKeywords: {", ".join(doc.get("keywords", []))}',
                         model="Qdrant/bm25",
@@ -70,15 +82,21 @@ def upload_documents(client, documents, collection_name=collection_name_PR_zoter
     except Exception as e:
         print(f"Error uploading documents: {e}")
 
-def search_documents(client, query, collection_name=collection_name_PR_zotero, limit=5):
+def search_documents(client, query, collection_name=collection_name_PR_zotero, embedding_model='mistral/mistral-embed:1024', limit=5):
     """Search for documents in a specific collection using a query."""
+
+    embedding_model_name = embedding_model.split(':')[0]
+
+
     try:
         results = client.query_points(
             collection_name=collection_name,
             prefetch=[
                 models.Prefetch(
-                    query=model.encode(query),
-                    using="qwen",
+                    query=embedding(
+                        model=embedding_model_name,
+                        input=query),
+                    using="semantic",
                     limit=limit * 10,
                 )
             ],

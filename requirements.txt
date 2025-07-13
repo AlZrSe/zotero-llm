@@ -7,3 +7,4 @@ requests>=2.31.0
 qdrant-client[fastembed]>=1.14.2
 mistralai>=1.0.0
 litellm
+ratelimit

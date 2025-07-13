@@ -1,6 +1,5 @@
 from qdrant_client import QdrantClient, models
-from litellm import embedding
-from ratelimit import limits
+from itertools import batched
 
 collection_name_PR_zotero = "zotero_llm_abstracts"
 
@@ -22,18 +21,7 @@ def get_all_collections(client):
         print(f"Error fetching collections: {e}")
         return None
     
-@limits(calls=1, period=1, raise_on_limit=False)
-def get_embedding(text, model='mistral/mistral-embed:1024'):
-    """Get embedding for a given text using the specified model."""
-    try:
-        embedding_model_name = model.split(':')[0]
-        response = embedding(model=embedding_model_name, input=[text])
-        return response['data'][0]['embedding'] if response and 'data' in response and len(response['data']) > 0 else None
-    except Exception as e:
-        print(f"Error getting embedding: {e}")
-        return None
-    
-def upload_documents(client, documents, collection_name=collection_name_PR_zotero, embedding_model='mistral/mistral-embed:1024'):
+def upload_documents(client, documents, collection_name=collection_name_PR_zotero, embedding_model='jinaai/jina-embeddings-v2-base-en:768'):
     """Upload documents to a specific collection in Qdrant."""
     
     embedding_model_name = embedding_model.split(':')[0]
@@ -56,9 +44,6 @@ def upload_documents(client, documents, collection_name=collection_name_PR_zoter
         )
         print(f"Collection '{collection_name}' created successfully.")
 
-        docs = [f'Title: {doc['title']}\nAbstract: {doc['abstract']}' for doc in documents if doc['title'] != '' or doc['abstract'] != '']
-
-        # Prepare documents for upload
         points = [
             models.PointStruct(
                 id=i,
@@ -76,26 +61,27 @@ def upload_documents(client, documents, collection_name=collection_name_PR_zoter
             )
             for i, doc in enumerate(documents) if doc['title'] != '' or doc['abstract'] != '' or len(doc.get('keywords', [])) > 0
         ]
-
-        client.upsert(collection_name=collection_name, points=points)
+        for batch in batched(points, 128):
+            client.upsert(collection_name=collection_name, points=batch)
         print(f"Uploaded {len(documents)} documents to collection '{collection_name}'")
     except Exception as e:
         print(f"Error uploading documents: {e}")
 
-def search_documents(client, query, collection_name=collection_name_PR_zotero, embedding_model='mistral/mistral-embed:1024', limit=5):
+def search_documents(client, query, collection_name=collection_name_PR_zotero, embedding_model='jinaai/jina-embeddings-v2-base-en:768', limit=5):
     """Search for documents in a specific collection using a query."""
 
     embedding_model_name = embedding_model.split(':')[0]
-
 
     try:
         results = client.query_points(
             collection_name=collection_name,
             prefetch=[
                 models.Prefetch(
-                    query=embedding(
+                    query=models.Document(
+                        text=query,
                         model=embedding_model_name,
-                        input=query),
+                    ),
+                    # Use semantic search with the specified embedding model
                     using="semantic",
                     limit=limit * 10,
                 )

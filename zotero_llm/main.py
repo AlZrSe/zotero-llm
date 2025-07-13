@@ -15,7 +15,7 @@ def setup_credentials():
     """Load credentials from .env file"""
     load_dotenv()
     
-    required_vars = ['OPENAI_API_KEY', 'LLM_MODEL', 'EMBEDDING_MODEL']
+    required_vars = ['LLM_MODEL', 'EMBEDDING_MODEL']
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     
     if missing_vars:
@@ -24,10 +24,9 @@ def setup_credentials():
         exit(1)
     
     return {
-        'openai_api_key': os.getenv('OPENAI_API_KEY'),
         'llm_base_url': os.getenv('LLM_BASE_URL', 'https://api.openai.com/v1'),
-        'llm_model': os.getenv('LLM_MODEL'),
-        'embedding_model': os.getenv('EMBEDDING_MODEL', 'Qwen/Qwen3-Embedding-8B')
+        'llm_model': os.getenv('LLM_MODEL', 'mistral/mistral-large-latest'),
+        'embedding_model': os.getenv('EMBEDDING_MODEL', 'jinaai/jina-embeddings-v2-base-en:768')
     }
 
 def main():

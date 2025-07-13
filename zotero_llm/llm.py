@@ -1,3 +1,5 @@
+from litellm import completion
+
 def analyze_papers(zot, query, credentials):
     """Analyze papers from local Zotero library using LLM"""
     try:
@@ -47,7 +49,7 @@ def analyze_papers(zot, query, credentials):
     
     return response.choices[0].message.content
 
-def ask_llm(query, zotero_list, llm_client, credentials):
+def ask_llm(query, zotero_list, model_name):
     """Ask the LLM a question with context and return the response"""
 
     context = "\n\n".join([f'Title: {item.get("title", "")}\nAbstract: {item.get("abstract", "")}\nYear: {item.get("year", "")}' for item in zotero_list])
@@ -62,9 +64,9 @@ def ask_llm(query, zotero_list, llm_client, credentials):
     Papers:
     {context}"""
 
-    response = llm_client.chat.completions.create(
-        model='auto', # credentials['llm_model'],
-        extra_query={"provider": "OpenaiChat"},
+    response = completion(
+        model=model_name,
+        # extra_query={"provider": "OpenaiChat"},
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}

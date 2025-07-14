@@ -1,100 +1,115 @@
 from qdrant_client import QdrantClient, models
+from typing import List, Dict, Optional
 from itertools import batched
 
-collection_name_PR_zotero = "zotero_llm_abstracts"
+class RAGEngine:
+    DEFAULT_COLLECTION = "zotero_llm_abstracts"
+    DEFAULT_EMBEDDING_MODEL = 'jinaai/jina-embeddings-v2-base-en:768'
 
-def get_qdrant_client():
-    """Return a Qdrant client configured for the local Qdrant server."""
-    # Use the default URL and port for local Qdrant server
-    try:
-        client = QdrantClient("http://localhost:6333")
-        return client
-    except Exception as e:
-        return None
+    def __init__(self, server_url: str = "http://localhost:6333"):
+        """Initialize RAG engine with Qdrant client."""
+        self.client = self._create_client(server_url)
+        self.embedding_model = self.DEFAULT_EMBEDDING_MODEL
+        self.embedding_model_name = self.embedding_model.split(':')[0]
+        self.embedding_model_size = int(self.embedding_model.split(':')[1])
 
-def get_all_collections(client):
-    """Fetch all collections from the Qdrant server."""
-    try:
-        collections = client.get_collections()
-        return [collection.name for collection in collections]
-    except Exception as e:
-        print(f"Error fetching collections: {e}")
-        return None
-    
-def upload_documents(client, documents, collection_name=collection_name_PR_zotero, embedding_model='jinaai/jina-embeddings-v2-base-en:768'):
-    """Upload documents to a specific collection in Qdrant."""
-    
-    embedding_model_name = embedding_model.split(':')[0]
-    embedding_model_size = int(embedding_model.split(':')[1])
+    def _create_client(self, server_url: str) -> Optional[QdrantClient]:
+        """Create and return a Qdrant client."""
+        try:
+            return QdrantClient(server_url)
+        except Exception as e:
+            print(f"Error creating Qdrant client: {e}")
+            return None
 
-    try:
-        client.create_collection(
-            collection_name=collection_name,
-            sparse_vectors_config={
-                "bm25": models.SparseVectorParams(
-                    modifier=models.Modifier.IDF,
-                )
-            },
-            vectors_config={
-                'semantic': models.VectorParams(
-                    size=embedding_model_size,  # Dimensionality of the vectors
-                    distance=models.Distance.COSINE  # Distance metric for similarity search
-                )
-            }
-        )
-        print(f"Collection '{collection_name}' created successfully.")
+    def get_collections(self) -> List[str]:
+        """Fetch all collections from the Qdrant server."""
+        try:
+            collections = self.client.get_collections()
+            return [collection.name for collection in collections.collections]
+        except Exception as e:
+            print(f"Error fetching collections: {e}")
+            return []
 
-        points = [
-            models.PointStruct(
-                id=i,
-                vector={
-                    "semantic": models.Document(
-                        text=f'Title: {doc['title']}\nAbstract: {doc['abstract']}',
-                        model=embedding_model_name,
-                    ),
-                    "bm25": models.Document(
-                        text=f'Title: {doc['title']}\nAbstract: {doc['abstract']}\nKeywords: {", ".join(doc.get("keywords", []))}',
-                        model="Qdrant/bm25",
-                    ),
+    def upload_documents(self, documents: List[Dict], collection_name: str = DEFAULT_COLLECTION) -> None:
+        """Upload documents to a specific collection in Qdrant."""
+        try:
+            # Create collection if it doesn't exist
+            self.client.create_collection(
+                collection_name=collection_name,
+                sparse_vectors_config={
+                    "bm25": models.SparseVectorParams(
+                        modifier=models.Modifier.IDF,
+                    )
                 },
-                payload=doc
+                vectors_config={
+                    'semantic': models.VectorParams(
+                        size=self.embedding_model_size,
+                        distance=models.Distance.COSINE
+                    )
+                }
             )
-            for i, doc in enumerate(documents) if doc['title'] != '' or doc['abstract'] != '' or len(doc.get('keywords', [])) > 0
-        ]
-        for batch in batched(points, 128):
-            client.upsert(collection_name=collection_name, points=batch)
-        print(f"Uploaded {len(documents)} documents to collection '{collection_name}'")
-    except Exception as e:
-        print(f"Error uploading documents: {e}")
+            print(f"Collection '{collection_name}' created successfully.")
 
-def search_documents(client, query, collection_name=collection_name_PR_zotero, embedding_model='jinaai/jina-embeddings-v2-base-en:768', limit=5):
-    """Search for documents in a specific collection using a query."""
-
-    embedding_model_name = embedding_model.split(':')[0]
-
-    try:
-        results = client.query_points(
-            collection_name=collection_name,
-            prefetch=[
-                models.Prefetch(
-                    query=models.Document(
-                        text=query,
-                        model=embedding_model_name,
-                    ),
-                    # Use semantic search with the specified embedding model
-                    using="semantic",
-                    limit=limit * 10,
+            # Prepare points for upload
+            points = [
+                models.PointStruct(
+                    id=i,
+                    vector={
+                        "semantic": models.Document(
+                            text=f'Title: {doc["title"]}\nAbstract: {doc["abstract"]}',
+                            model=self.embedding_model_name,
+                        ),
+                        "bm25": models.Document(
+                            text=f'Title: {doc["title"]}\nAbstract: {doc["abstract"]}\nKeywords: {", ".join(doc.get("keywords", []))}',
+                            model="Qdrant/bm25",
+                        ),
+                    },
+                    payload=doc
                 )
-            ],
-            query=models.Document(
-                text=query,
-                model="Qdrant/bm25",
-            ),
-            using="bm25",
-            limit=limit,
-            with_payload=True,
-        )
-        return [result.payload for result in results.points]
-    except Exception as e:
-        print(f"Error searching documents: {e}")
-        return []
+                for i, doc in enumerate(documents)
+                if doc['title'] != '' or doc['abstract'] != '' or len(doc.get('keywords', [])) > 0
+            ]
+
+            # Upload in batches
+            for batch in batched(points, 128):
+                self.client.upsert(collection_name=collection_name, points=batch)
+            print(f"Uploaded {len(documents)} documents to collection '{collection_name}'")
+
+        except Exception as e:
+            print(f"Error uploading documents: {e}")
+
+    def search_documents(self, query: str, collection_name: str = DEFAULT_COLLECTION, limit: int = 5) -> List[Dict]:
+        """Search for documents in a specific collection using a query."""
+        try:
+            results = self.client.query_points(
+                collection_name=collection_name,
+                prefetch=[
+                    models.Prefetch(
+                        query=models.Document(
+                            text=query,
+                            model=self.embedding_model_name,
+                        ),
+                        using="semantic",
+                        limit=limit * 10,
+                    )
+                ],
+                query=models.Document(
+                    text=query,
+                    model="Qdrant/bm25",
+                ),
+                using="bm25",
+                limit=limit,
+                with_payload=True,
+            )
+            return [result.payload for result in results.points]
+        except Exception as e:
+            print(f"Error searching documents: {e}")
+            return []
+
+    def test_connection(self) -> bool:
+        """Test the connection to Qdrant server."""
+        try:
+            self.client.get_collections()
+            return True
+        except Exception:
+            return False

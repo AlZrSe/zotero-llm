@@ -18,8 +18,9 @@ class LLMClient:
         """Initialize LLM client with model configuration."""
         self.model_name = model_name
         self._system_prompt = """You are a research assistant analyzing academic papers.
-        Based on the provided papers and query, provide useful thoughts, summary, insights and suggestions.
-        Also, provide citations as numbers in square brackets with a reference list of the papers used at the end of your response."""
+        Based on the provided papers and query, provide useful thoughts, summary, insights
+        and suggestions. Also, provide citations as numbers in square brackets in mentioned
+        sentences with a reference list of the papers used at the end of your response."""
 
     def _format_papers_context(self, papers: List[Dict]) -> str:
         """Format papers into a string context for the LLM."""

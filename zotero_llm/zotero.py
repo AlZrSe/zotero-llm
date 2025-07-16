@@ -1,5 +1,6 @@
 from pyzotero import zotero
 from typing import List, Dict, Optional
+import os
 
 class ZoteroClient:
     def __init__(self):
@@ -7,9 +8,14 @@ class ZoteroClient:
         self.client = self._create_client()
 
     def _create_client(self) -> zotero.Zotero:
-        """Create and return a Zotero client configured for the local Zotero HTTP server."""
+        """Create and return a Zotero client configured for the local Zotero HTTP server using ZOTERO_URL."""
+        zotero_url = os.environ.get('ZOTERO_URL')
+        if not zotero_url:
+            raise ValueError("ZOTERO_URL environment variable not set.")
         # Use dummy userID and API key, as local server does not require them
-        return zotero.Zotero('0', 'user', 'local-api-key', local=True)
+        zot = zotero.Zotero('0', 'user', 'local-api-key', local=True)
+        zot.endpoint = zotero_url
+        return zot
 
     def fetch_all_items(self) -> Optional[List[Dict]]:
         """Fetch all items from the Zotero library."""

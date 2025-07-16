@@ -2,3 +2,5 @@
 .env
 */__pycache__/
 zotero_llm.log
+zotero_config
+qdrant_storage

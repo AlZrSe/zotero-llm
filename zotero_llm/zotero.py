@@ -14,7 +14,7 @@ class ZoteroClient:
     def fetch_all_items(self) -> Optional[List[Dict]]:
         """Fetch all items from the Zotero library."""
         try:
-            items = self.client.items(limit=5000)  # Fetch up to 5000 items
+            items = self.client.items(limit=None)  # Fetch up to 5000 items
             docs = [
                 {
                     'zotero_key': item['key'],
@@ -28,9 +28,34 @@ class ZoteroClient:
                 }
                 for item in items if item['data']['itemType'] != 'attachment'
             ]
+
+            # Fetch group libraries
+            groups = self.client.groups()
+            for group in groups:
+                try:
+                    group_client = zotero.Zotero(group['id'], 'group', 'local-api-key', local=True)
+                    group_items = group_client.items(limit=None)
+                    group_docs = [
+                        {
+                            'zotero_key': item['key'],
+                            'title': item['data'].get('title', ''),
+                            'abstract': item['data'].get('abstractNote', ''),
+                            'authors': item['data'].get('creators', []),
+                            'year': item['data'].get('date', ''),
+                            'journal': item['data'].get('publicationTitle', ''),
+                            'doi': item['data'].get('DOI', ''),
+                            'keywords': [tag['tag'] for tag in item['data'].get('tags', [])],
+                        }
+                        for item in group_items if item['data']['itemType'] != 'attachment'
+                    ]
+                    docs.extend(group_docs)
+                except Exception as e:
+                    print(f"Error fetching group {group['id']}: {e}")
+
+            # Drop duplicates based on doi
+            unique_docs = {doc['doi']: doc for doc in docs if doc['doi']}
             
-            print(f"Fetched {len(docs)} items from Zotero.")
-            return docs
+            return list(unique_docs.values())
         except Exception as e:
             print(f"Error fetching items: {e}")
             return None

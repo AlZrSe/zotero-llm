@@ -10,6 +10,7 @@ class ResearchAssistant:
     def __init__(self):
         """Initialize the Research Assistant with its components."""
         self.log_file = "zotero_llm.log"
+        self.debug_messages = []
         self.credentials = self._setup_credentials()
         self.zotero = ZoteroClient()
         self.rag = RAGEngine()
@@ -20,7 +21,16 @@ class ResearchAssistant:
         self.qdrant_status = gr.State(False)
         self.llm_status = gr.State(False)
         
-        self._initialize_system()
+        # self._initialize_system()
+
+    def debug_print(self, message: str) -> None:
+        """Print a message to both console and debug output."""
+        print(message)
+        self.debug_messages.append(message)
+        
+    def get_debug_output(self) -> str:
+        """Get all debug messages."""
+        return "\n".join(self.debug_messages)
 
     def _setup_credentials(self) -> Dict[str, str]:
         """Load and validate credentials from .env file."""
@@ -30,8 +40,8 @@ class ResearchAssistant:
         missing_vars = [var for var in required_vars if not os.getenv(var)]
         
         if missing_vars:
-            self.console.print(f"[red]Missing required environment variables: {', '.join(missing_vars)}")
-            self.console.print("Please add them to your .env file")
+            self.debug_print(f"ERROR: Missing required environment variables: {', '.join(missing_vars)}")
+            self.debug_print("Please add them to your .env file")
             exit(1)
         
         return {
@@ -47,28 +57,28 @@ class ResearchAssistant:
 
         # Test Zotero connection
         if not self.zotero.test_connection():
-            messages.append("❌ Failed to connect to Zotero.")
+            self.debug_print("❌ Failed to connect to Zotero.")
             success = False
         else:
-            messages.append("✅ Connected to local Zotero library successfully!")
+            self.debug_print("✅ Connected to local Zotero library successfully!")
 
         # Test Qdrant connection
         if not self.rag.test_connection():
-            messages.append("❌ Failed to connect to Qdrant.")
+            self.debug_print("❌ Failed to connect to Qdrant.")
             success = False
         else:
-            messages.append("✅ Connected to local Qdrant server successfully!")
+            self.debug_print("✅ Connected to local Qdrant server successfully!")
 
         # Ensure collection exists
         collections = self.rag.get_collections()
         if self.rag.DEFAULT_COLLECTION not in collections:
-            messages.append(f"⚠️ Creating collection '{self.rag.DEFAULT_COLLECTION}'...")
+            self.debug_print(f"⚠️ Creating collection '{self.rag.DEFAULT_COLLECTION}'...")
             documents = self.zotero.fetch_all_items()
             if documents:
                 self.rag.upload_documents(documents)
-                messages.append(f"✅ Collection '{self.rag.DEFAULT_COLLECTION}' created successfully!")
+                self.debug_print(f"✅ Collection '{self.rag.DEFAULT_COLLECTION}' created successfully!")
         else:
-            messages.append(f"✅ Collection '{self.rag.DEFAULT_COLLECTION}' exists.")
+            self.debug_print(f"✅ Collection '{self.rag.DEFAULT_COLLECTION}' exists.")
 
         return success, "\n".join(messages)
 
@@ -76,13 +86,14 @@ class ResearchAssistant:
         """Ensure the main Zotero collection exists in Qdrant."""
         collections = self.rag.get_collections()
         if self.rag.DEFAULT_COLLECTION not in collections:
-            self.console.print(f"[yellow]Collection '{self.rag.DEFAULT_COLLECTION}' does not exist. Creating it...[/yellow]")
+            self.debug_print(f"INFO: Collection '{self.rag.DEFAULT_COLLECTION}' does not exist. Creating it...")
             documents = self.zotero.fetch_all_items()
+            self.debug_print(f"Fetched {len(documents)} documents from Zotero.")
             if documents:
                 self.rag.upload_documents(documents)
-                self.console.print(f"[green]Collection '{self.rag.DEFAULT_COLLECTION}' created successfully![/green]")
+                self.debug_print(f"SUCCESS: Collection '{self.rag.DEFAULT_COLLECTION}' created successfully!")
         else:
-            self.console.print(f"[blue]Collection '{self.rag.DEFAULT_COLLECTION}' already exists.[/blue]")
+            self.debug_print(f"INFO: Collection '{self.rag.DEFAULT_COLLECTION}' already exists.")
 
     def check_services_status(self) -> Tuple[bool, bool, bool]:
         """Check the status of all services."""
@@ -100,19 +111,23 @@ class ResearchAssistant:
             "🟢" if llm_ok else "🔴"
         ]
 
-    def process_query(self, query: str) -> str:
+    def process_query(self, query: str) -> Tuple[str, str]:
         """Process a research query and return analysis results."""
         try:
+            self.debug_print(f"INFO: Processing query: {query}")
             context = self.rag.search_documents(query)
             analysis = self.llm.ask_question(query, context)
             
             # Log the interaction
             with open(self.log_file, 'a', encoding='utf-8') as log_file:
                 log_file.write(f"Query: {query}\nResponse: {analysis}\n\n\n")
-                
-            return analysis
+            
+            self.debug_print("SUCCESS: Query processed successfully")
+            return analysis, self.get_debug_output()
         except Exception as e:
-            return f"Error during analysis: {str(e)}"
+            error_msg = f"Error during analysis: {str(e)}"
+            self.debug_print(f"ERROR: {error_msg}")
+            return error_msg, self.get_debug_output()
 
     def create_interface(self) -> gr.Blocks:
         """Create and configure the Gradio interface."""
@@ -157,6 +172,14 @@ class ResearchAssistant:
                 label="LLM Analysis"
             )
             
+            debug_output = gr.Textbox(
+                lines=5,
+                label="Debug Output",
+                value=self.get_debug_output(),
+                interactive=False,
+                visible=False
+            )
+            
             # Examples
             gr.Examples(
                 examples=[
@@ -171,14 +194,14 @@ class ResearchAssistant:
             submit_btn.click(
                 fn=self.process_query,
                 inputs=query_input,
-                outputs=analysis_output
+                outputs=[analysis_output, debug_output]
             )
 
             # Add Ctrl+Enter shortcut
             query_input.submit(
                 fn=self.process_query,
                 inputs=query_input,
-                outputs=analysis_output,
+                outputs=[analysis_output, debug_output],
                 api_name=False  # Prevent API endpoint creation
             )#.then(
             #     None,  # No additional function to call

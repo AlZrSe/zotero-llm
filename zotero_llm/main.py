@@ -14,7 +14,7 @@ class ResearchAssistant:
         self.credentials = self._setup_credentials()
         self.zotero = ZoteroClient()
         self.rag = RAGEngine()
-        self.llm = LLMClient(self.credentials['llm_model'])
+        self.llm = LLMClient(self.credentials['llm_model'], self.credentials['llm_base_url'])
         
         # Initialize status states
         self.zotero_status = gr.State(False)
@@ -45,7 +45,7 @@ class ResearchAssistant:
             exit(1)
         
         return {
-            'llm_base_url': os.getenv('LLM_BASE_URL', 'https://api.openai.com/v1'),
+            'llm_base_url': os.getenv('LLM_BASE_URL', None),
             'llm_model': os.getenv('LLM_MODEL', 'mistral/mistral-large-latest'),
             'embedding_model': os.getenv('EMBEDDING_MODEL', 'jinaai/jina-embeddings-v2-base-en:768')
         }

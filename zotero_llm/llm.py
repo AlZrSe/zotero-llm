@@ -14,13 +14,14 @@ class Paper:
 class LLMClient:
     """Class to handle interactions with Language Learning Models."""
     
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, base_url: str = None):
         """Initialize LLM client with model configuration."""
         self.model_name = model_name
         self._system_prompt = """You are a research assistant analyzing academic papers.
         Based on the provided papers and query, provide useful thoughts, summary, insights
         and suggestions. Also, provide citations as numbers in square brackets in mentioned
         sentences with a reference list of the papers used at the end of your response."""
+        self.base_url = base_url
 
     def _format_papers_context(self, papers: List[Dict]) -> str:
         """Format papers into a string context for the LLM."""
@@ -43,6 +44,20 @@ class LLMClient:
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": f"Query: {query}\n\nPapers:\n{context}"}
         ]
+    
+    def ask_llm(self, messages: str) -> str:
+        """Ask the LLM a question and return its response."""
+        if self.base_url:
+            return completion(
+                model=self.model_name,
+                messages=messages,
+                base_url=self.base_url
+            ).choices[0].message.content
+        else:
+            return completion(
+                model=self.model_name,
+                messages=messages
+            ).choices[0].message.content
 
     def ask_question(self, query: str, papers: List[Dict]) -> str:
         """
@@ -63,13 +78,8 @@ class LLMClient:
             messages = self._create_messages(query, context)
             
             # Get completion from LLM
-            response = completion(
-                model=self.model_name,
-                messages=messages
-            )
-            
-            return response.choices[0].message.content
-            
+            return self.ask_llm(messages)
+
         except Exception as e:
             print(f"Error getting LLM response: {e}")
             return f"Failed to get analysis: {str(e)}"

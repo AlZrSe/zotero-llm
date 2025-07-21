@@ -4,14 +4,12 @@ from itertools import batched
 
 class RAGEngine:
     DEFAULT_COLLECTION = "zotero_llm_abstracts"
-    DEFAULT_EMBEDDING_MODEL = 'jinaai/jina-embeddings-v2-base-en:768'
 
-    def __init__(self, server_url: str = "http://localhost:6333"):
+    def __init__(self, server_url: str = "http://localhost:6333", embedding_model: str = 'jinaai/jina-embeddings-v2-base-en', embedding_model_size: int = 768):
         """Initialize RAG engine with Qdrant client."""
         self.client = self._create_client(server_url)
-        self.embedding_model = self.DEFAULT_EMBEDDING_MODEL
-        self.embedding_model_name = self.embedding_model.split(':')[0]
-        self.embedding_model_size = int(self.embedding_model.split(':')[1])
+        self.embedding_model_name = embedding_model
+        self.embedding_model_size = embedding_model_size
 
     def _create_client(self, server_url: str) -> Optional[QdrantClient]:
         """Create and return a Qdrant client."""

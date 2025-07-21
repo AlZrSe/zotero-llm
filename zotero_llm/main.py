@@ -1,3 +1,4 @@
+import json
 from dotenv import load_dotenv
 import os
 import gradio as gr
@@ -11,10 +12,10 @@ class ResearchAssistant:
         """Initialize the Research Assistant with its components."""
         self.log_file = "zotero_llm.log"
         self.debug_messages = []
-        self.credentials = self._setup_credentials()
+        self.llm_config = self._llm_config()
         self.zotero = ZoteroClient()
-        self.rag = RAGEngine()
-        self.llm = LLMClient(self.credentials['llm_model'], self.credentials['llm_base_url'])
+        self.rag = RAGEngine(**self.llm_config['embedding_model'])
+        self.llm = LLMClient(**self.llm_config['answer_llm'])        
         
         # Initialize status states
         self.zotero_status = gr.State(False)
@@ -32,23 +33,11 @@ class ResearchAssistant:
         """Get all debug messages."""
         return "\n".join(self.debug_messages)
 
-    def _setup_credentials(self) -> Dict[str, str]:
-        """Load and validate credentials from .env file."""
-        load_dotenv()
-        
-        required_vars = ['LLM_MODEL', 'EMBEDDING_MODEL']
-        missing_vars = [var for var in required_vars if not os.getenv(var)]
-        
-        if missing_vars:
-            self.debug_print(f"ERROR: Missing required environment variables: {', '.join(missing_vars)}")
-            self.debug_print("Please add them to your .env file")
-            exit(1)
-        
-        return {
-            'llm_base_url': os.getenv('LLM_BASE_URL', None),
-            'llm_model': os.getenv('LLM_MODEL', 'mistral/mistral-large-latest'),
-            'embedding_model': os.getenv('EMBEDDING_MODEL', 'jinaai/jina-embeddings-v2-base-en:768')
-        }
+    def _llm_config(self) -> Dict[str, str]:
+        """Load LLM configuration from `llm_config.json`."""
+        with open("llm_config.json", "r") as f:
+            config = json.load(f)
+        return config
 
     def _initialize_system(self) -> Tuple[bool, str]:
         """Initialize and test all necessary connections."""

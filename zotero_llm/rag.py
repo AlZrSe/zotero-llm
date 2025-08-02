@@ -3,13 +3,16 @@ from typing import List, Dict, Optional
 from itertools import batched
 
 class RAGEngine:
-    DEFAULT_COLLECTION = "zotero_llm_abstracts"
 
-    def __init__(self, server_url: str = "http://localhost:6333", embedding_model: str = 'jinaai/jina-embeddings-v2-base-en', embedding_model_size: int = 768):
+    def __init__(self, collection_name: str,
+                 server_url: str = "http://localhost:6333",
+                 embedding_model: str = 'jinaai/jina-embeddings-v2-base-en',
+                 embedding_model_size: int = 768):
         """Initialize RAG engine with Qdrant client."""
         self.client = self._create_client(server_url)
         self.embedding_model_name = embedding_model
         self.embedding_model_size = embedding_model_size
+        self.collection_name = collection_name
 
     def _create_client(self, server_url: str) -> Optional[QdrantClient]:
         """Create and return a Qdrant client."""
@@ -23,17 +26,29 @@ class RAGEngine:
         """Fetch all collections from the Qdrant server."""
         try:
             collections = self.client.get_collections()
-            return [collection.name for collection in collections.collections]
+            return [{'name': collection.name,
+                     'size': self.client.count(collection_name=collection.name)}
+                     for collection in collections.collections]
         except Exception as e:
             print(f"Error fetching collections: {e}")
             return []
+        
+    def if_collection_exists(self, collection_name: str) -> bool:
+        """Check if a collection exists and is not empty."""
+        try:
+            return self.client.get_collection(collection_name) is not None
+        except Exception as e:
+            print(f"Error checking collection '{collection_name}': {e}")
+        return False
 
-    def upload_documents(self, documents: List[Dict], collection_name: str = DEFAULT_COLLECTION) -> None:
+    def upload_documents(self, documents: List[Dict], collection_name = None) -> None:
         """Upload documents to a specific collection in Qdrant."""
+        coll_name = collection_name or self.collection_name
+
         try:
             # Create collection if it doesn't exist
             self.client.create_collection(
-                collection_name=collection_name,
+                collection_name=coll_name,
                 sparse_vectors_config={
                     "bm25": models.SparseVectorParams(
                         modifier=models.Modifier.IDF,
@@ -46,7 +61,7 @@ class RAGEngine:
                     )
                 }
             )
-            print(f"Collection '{collection_name}' created successfully.")
+            print(f"Collection '{coll_name}' created successfully.")
 
             # Prepare points for upload
             points = [
@@ -70,17 +85,19 @@ class RAGEngine:
 
             # Upload in batches
             for batch in batched(points, 128):
-                self.client.upsert(collection_name=collection_name, points=batch)
-            print(f"Uploaded {len(documents)} documents to collection '{collection_name}'")
+                self.client.upsert(collection_name=coll_name, points=batch)
+            print(f"Uploaded {len(documents)} documents to collection '{coll_name}'")
 
         except Exception as e:
             print(f"Error uploading documents: {e}")
 
-    def search_documents(self, query: str, collection_name: str = DEFAULT_COLLECTION, limit: int = 5) -> List[Dict]:
+    def search_documents(self, query: str, collection_name = None, limit: int = 5) -> List[Dict]:
         """Search for documents in a specific collection using a query."""
+        coll_name = collection_name or self.collection_name
+        
         try:
             results = self.client.query_points(
-                collection_name=collection_name,
+                collection_name=coll_name,
                 prefetch=[
                     models.Prefetch(
                         query=models.Document(
@@ -99,7 +116,14 @@ class RAGEngine:
                 limit=limit,
                 with_payload=True,
             )
-            return [result.payload for result in results.points]
+            # Return payload with search scores
+            if results.points:
+                eval_context = []
+                for point in results.points:
+                    if 'doi' in point.payload:
+                        point.payload['score'] = point.score
+                        eval_context.append(point.payload)
+                return eval_context
         except Exception as e:
             print(f"Error searching documents: {e}")
             return []

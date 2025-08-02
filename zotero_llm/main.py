@@ -1,22 +1,34 @@
 import json
 from dotenv import load_dotenv
 import os
+import sys
+from pathlib import Path
+
+# Add the project root to the Python path
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 import gradio as gr
 from typing import Dict, Optional, Tuple
-from zotero import ZoteroClient
-from rag import RAGEngine
-from llm import LLMClient
+from zotero_llm.zotero import ZoteroClient
+from zotero_llm.rag import RAGEngine
+from zotero_llm.llm import LLMClient
 
 class ResearchAssistant:
-    def __init__(self):
+    DEFAULT_COLLECTION = "zotero_llm_abstracts"
+
+    def __init__(self, embedding_model = None, collection_name = None):
         """Initialize the Research Assistant with its components."""
         self.log_file = "zotero_llm.log"
         self.debug_messages = []
         self.llm_config = self._llm_config()
         self.zotero = ZoteroClient()
-        self.rag = RAGEngine(**self.llm_config['embedding_model'])
-        self.llm = LLMClient(**self.llm_config['answer_llm'])        
-        
+        embedding_model = embedding_model or self.llm_config.get('embedding_model', {})
+        self.collection_name = collection_name or ResearchAssistant.DEFAULT_COLLECTION
+        self.rag = RAGEngine(**embedding_model, collection_name=self.collection_name)
+        self.llm = LLMClient(**self.llm_config['answer_llm'])
+
         # Initialize status states
         self.zotero_status = gr.State(False)
         self.qdrant_status = gr.State(False)
@@ -55,34 +67,43 @@ class ResearchAssistant:
         if not self.rag.test_connection():
             self.debug_print("❌ Failed to connect to Qdrant.")
             success = False
+            exit(1)
         else:
             self.debug_print("✅ Connected to local Qdrant server successfully!")
 
         # Ensure collection exists
-        collections = self.rag.get_collections()
-        if self.rag.DEFAULT_COLLECTION not in collections:
-            self.debug_print(f"⚠️ Creating collection '{self.rag.DEFAULT_COLLECTION}'...")
+        if not self.rag.if_collection_exists(self.collection_name):
+            self.debug_print(f"⚠️ Creating collection '{self.collection_name}'...")
             documents = self.zotero.fetch_all_items()
             if documents:
                 self.rag.upload_documents(documents)
-                self.debug_print(f"✅ Collection '{self.rag.DEFAULT_COLLECTION}' created successfully!")
+                self.debug_print(f"✅ Collection '{self.collection_name}' created successfully!")
         else:
-            self.debug_print(f"✅ Collection '{self.rag.DEFAULT_COLLECTION}' exists.")
+            self.debug_print(f"✅ Collection '{self.collection_name}' exists.")
 
         return success, "\n".join(messages)
+    
+    def upload_documents(self, collection_name: Optional[str] = None) -> None:
+        """Upload documents to the specified collection."""
+        collection_name = collection_name or self.collection_name
+        
+        self.debug_print(f"INFO: Uploading documents to collection '{collection_name}'...")
+        documents = self.zotero.fetch_all_items()
+        if documents:
+            self.rag.upload_documents(documents, collection_name)
+            self.debug_print(f"SUCCESS: Uploaded {len(documents)} documents to '{collection_name}'.")
+        else:
+            self.debug_print("WARNING: No documents found to upload.")
 
     def _ensure_collection_exists(self) -> None:
         """Ensure the main Zotero collection exists in Qdrant."""
-        collections = self.rag.get_collections()
-        if self.rag.DEFAULT_COLLECTION not in collections:
-            self.debug_print(f"INFO: Collection '{self.rag.DEFAULT_COLLECTION}' does not exist. Creating it...")
-            documents = self.zotero.fetch_all_items()
-            self.debug_print(f"Fetched {len(documents)} documents from Zotero.")
-            if documents:
-                self.rag.upload_documents(documents)
-                self.debug_print(f"SUCCESS: Collection '{self.rag.DEFAULT_COLLECTION}' created successfully!")
+
+        res = self.rag.client.collection_exists(self.collection_name)
+        if not res:
+            self.debug_print(f"INFO: Collection '{self.collection_name}' does not exist. Creating it...")
+            self.upload_documents(self.collection_name)
         else:
-            self.debug_print(f"INFO: Collection '{self.rag.DEFAULT_COLLECTION}' already exists.")
+            self.debug_print(f"INFO: Collection '{self.collection_name}' already exists.")
 
     def check_services_status(self) -> Tuple[bool, bool, bool]:
         """Check the status of all services."""
@@ -105,6 +126,7 @@ class ResearchAssistant:
         try:
             self.debug_print(f"INFO: Processing query: {query}")
             context = self.rag.search_documents(query)
+            context = sorted(context, key=lambda x: x['year'])
             analysis = self.llm.ask_question(query, context)
             
             # Log the interaction

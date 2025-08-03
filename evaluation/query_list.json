@@ -1,0 +1,415 @@
+[
+    {
+        "query": "Which LLM's are helpful for developing cloud-native software?",
+        "context_dois": [
+            "10.1016/j.future.2025.107947"
+        ]
+    },
+    {
+        "query": "Propose LLM for human-robotics interaction problem.",
+        "context_dois": [
+            "10.1109/HRI61500.2025.10974045"
+        ]
+    },
+    {
+        "query": "Which investigation connected with COVID problems?",
+        "context_dois": [
+            "10.1007/s10278-025-01395-9"
+        ]
+    },
+    {
+        "query": "How can large language models improve patient communication and education in gastroenterology and gastrointestinal surgery?",
+        "context_dois": [
+            "10.14740/gr2011"
+        ]
+    },
+    {
+        "query": "What formal methods are used for reasoning about assurance cases with large language models?",
+        "context_dois": [
+            "10.1016/j.scico.2025.103288"
+        ]
+    },
+    {
+        "query": "How is the Elliott Wave Principle integrated with multi-agent deep learning approaches for financial market analysis?",
+        "context_dois": [
+            "10.3390/app142411897"
+        ]
+    },
+    {
+        "query": "How do LLM chatbots support eating disorder recovery while maintaining privacy?",
+        "context_dois": [
+            "10.1145/3706598.3713485"]
+    },
+    {
+        "query": "What verification methods do analysts use to validate AI-assisted data analyses?",
+        "context_dois": [
+            "10.1145/3613904.3642497"
+        ]
+    },
+    {
+        "query": "How do data dictionary descriptions improve tabular data reusability?",
+        "context_dois": [
+            "10.1109/ICSC64641.2025.00035"
+        ]
+    },
+    {
+        "query": "What is the effectiveness of generative language models in creating examination questions?",
+        "context_dois": [
+            "10.1016/j.ajpe.2024.100684"
+        ]
+    },
+    {
+        "query": "What capabilities does an AI-powered surgical oral examination simulator provide for medical education?",
+        "context_dois": [
+            "10.1016/j.mcpdig.2025.100241"
+        ]
+    },
+    {
+        "query": "Why should course recommender systems consider job market conditions?",
+        "context_dois": [
+            "10.1145/3626772.3657847"
+        ]
+    },
+    {
+        "query": "How does SCAR perform power side-channel analysis at the RTL level?",
+        "context_dois": [
+            "10.1109/TVLSI.2024.3390601"
+        ]
+    },
+    {
+        "query": "How does retrieval-augmented generation enhance decision-making in broiler production management?",
+        "context_dois": [
+            "10.3390/agriengineering7010012"
+        ]
+    },
+    {
+        "query": "What is BLENDSQL and how does it unify hybrid question answering in relational algebra?",
+        "context_dois": [
+            "10.18653/v1/2024.findings-acl.25"
+        ]
+    },
+    {
+        "query": "Can large language models accurately predict employee attrition patterns?",
+        "context_dois": [
+            "10.1145/3708036.3708229"
+        ]
+    },
+    {
+        "query": "How does retrieval-augmented generation automate systematic literature reviews?",
+        "context_dois": [
+            "10.3390/app14199103"
+        ]
+    },
+    {
+        "query": "What contrastive learning methods are used for co-speech gesture representation in dialogue?",
+        "context_dois": [
+            "10.1145/3678957.3685707"
+        ]
+    },
+    {
+        "query": "How do deep-learning linguistic models enhance interpretation of clustering results in novel datasets?",
+        "context_dois": [
+            "10.1007/s10489-025-06250-6"
+        ]
+    },
+    {
+        "query": "What feature selection techniques improve heart failure prediction accuracy in machine learning models?",
+        "context_dois": [
+            "10.1109/ICAIBD62003.2024.10604567"
+        ]
+    },
+    {
+        "query": "What are the key risk considerations for military deployment of large language models?",
+        "context_dois": [
+            "10.1117/12.3014424"
+        ]
+    },
+    {
+        "query": "How do multimodal LLMs enhance network operations capabilities?",
+        "context_dois": [
+            "10.1109/ICECE63871.2024.10976943"
+        ]
+    },
+    {
+        "query": "How can blockchain technology ensure ethical and transparent use of generative AI in banking and finance law?",
+        "context_dois": [
+            "10.1007/978-3-031-63800-8_16"
+        ]
+    },
+    {
+        "query": "What is GANDALF's approach?",
+        "context_dois": [
+            "10.1145/3672608.3707751"
+        ]
+    },
+    {
+        "query": "Which projects explain artificial intelligence concepts in natural language?",
+        "context_dois": [
+            "10.1109/ICDMW60847.2023.00118"
+        ]
+    },
+    {
+        "query": "How does AI generate portable library implementations?",
+        "context_dois": [
+            "10.1109/SCW63240.2024.00010"
+        ]
+    },
+    {
+        "query": "How do 3D scene graphs with LLM tooling improve robot navigation?",
+        "context_dois": [
+            "10.1109/WRCSARA64167.2024.10685831"
+        ]
+    },
+    {
+        "query": "What training data and internal structures influence explainability in large language models?",
+        "context_dois": [
+            "10.1609/aaai.v39i28.35268"
+        ]
+    },
+    {
+        "query": "How to make large language models better for child-robot dialogue interactions?",
+        "context_dois": [
+            "10.3390/s24247939"
+        ]
+    },
+    {
+        "query": "What datasets exists for multimodal dialogue with explanations?",
+        "context_dois": [
+            "10.1007/s10489-024-05479-x"
+        ]
+    },
+    {
+        "query": "How can artificial intelligence assist in detecting medication-related osteonecrosis of the jaw?",
+        "context_dois": [
+            "10.1016/j.oooo.2025.03.004"
+        ]
+    },
+    {
+        "query": "What is the effectiveness of GPT-4 in automated evaluation of written texts?",
+        "context_dois": [
+            "10.18653/v1/2023.bea-1.32"
+        ]
+    },
+    {
+        "query": "How do large language models function as autonomous cyber defenders?",
+        "context_dois": [
+            "10.1109/CAI64502.2025.00195"
+        ]
+    },
+    {
+        "query": "Where was used LLM-based topic modeling techniques?",
+        "context_dois": [
+            "10.1109/ACCESS.2025.3560543"
+        ]
+    },
+    {
+        "query": "What are problems for GDPR with large language models?",
+        "context_dois": [
+            "10.3390/fi17040151"
+        ]
+    },
+    {
+        "query": "How can LLMs automate biomedical data analysis processes?",
+        "context_dois": [
+            "10.1109/CCISP63826.2024.10765518"
+        ]
+    },
+    {
+        "query": "What testing methodologies are used to evaluate vision-language-action?",
+        "context_dois": [
+            "10.1145/3729343"
+        ]
+    },
+    {
+        "query": "How do large language models automate assessment of cyber-security requirements?",
+        "context_dois": [
+            "10.5220/0013345300003944"
+        ]
+    },
+    {
+        "query": "What challenges exist when using LLMs to extract table information from reports?",
+        "context_dois": [
+            "10.3390/computers13100257"
+        ]
+    },
+    {
+        "query": "What is recursive visual programming and how does it work?",
+        "context_dois": [
+            "10.1007/978-3-031-72775-7_1"
+        ]
+    },
+    {
+        "query": "How can LLMs be fine-tuned to provide reliable medical question-answering services?",
+        "context_dois": [
+            "10.1109/ICDMW65004.2024.00026"
+        ]
+    },
+    {
+        "query": "How do large language models advance medical video question answering?",
+        "context_dois": [
+            "10.1109/ICHORA65333.2025.11017179"
+        ]
+    },
+    {
+        "query": "What methods are effective for teaching students to interpret programming error messages?",
+        "context_dois": [
+            "10.1145/3617650.3624950"
+        ]
+    },
+    {
+        "query": "How does explainable AI classify suicidality risk and where?",
+        "context_dois": [
+            "10.2196/63809"
+        ]
+    },
+    {
+        "query": "What generative approaches are used for API method recommendation?",
+        "context_dois": [
+            "10.1109/SANER60148.2024.00025"
+        ]
+    },
+    {
+        "query": "What articles discuss performance and accuracy metrics for evaluating large language models?",
+        "context_dois": [
+            "10.14569/IJACSA.2024.0150807"
+        ]
+    },
+    {
+        "query": "What projects allow to interpret language models using various methods?",
+        "context_dois": [
+            "10.1109/TVCG.2023.3346713"
+        ]
+    },
+    {
+        "query": "What ability opens with reasoning capabilities of large language models?",
+        "context_dois": [
+            "10.18653/v1/2023.findings-acl.364"
+        ]
+    },
+    {
+        "query": "How generate scenarios using large language models?",
+        "context_dois": [
+            "10.1109/TSMC.2024.3392930"
+        ]
+    },
+    {
+        "query": "What methods exists to enhance medical question answering?",
+        "context_dois": [
+            "10.1109/BIBM62325.2024.10822341"
+        ]
+    },
+    {
+        "query": "What evaluation frameworks are most suitable for assessing large language models in social science research?",
+        "context_dois": [
+            "10.1177/25152459251325174"
+        ]
+    },
+    {
+        "query": "How repair and explain robot failures?",
+        "context_dois": [
+            "10.1145/3643834.3661559"
+        ]
+    },
+    {
+        "query": "How can LLM conduct analyzing Einstein's special theory of relativity?",
+        "context_dois": [
+            "10.1007/s44163-023-00075-3"
+        ]
+    },
+    {
+        "query": "What topics were covered in the first workshop on recommendation with generative models?",
+        "context_dois": [
+            "10.1145/3583780.3615304"
+        ]
+    },
+    {
+        "query": "How can GPT-4 used with causal machine learning approaches?",
+        "context_dois": [
+            "10.1016/j.eswa.2024.126120"
+        ]
+    },
+    {
+        "query": "How can LLM to use for educational research?",
+        "context_dois": [
+            "10.37074/jalt.2024.7.2.32"
+        ]
+    },
+    {
+        "query": "What datasets used for speech-to-text foundation model?",
+        "context_dois": [
+            "10.21437/Interspeech.2024-1938"
+        ]
+    },
+    {
+        "query": "How effective are large language models for generating clinical reviews in healthcare settings?",
+        "context_dois": [
+            "10.1038/s41746-025-01535-z"
+        ]
+    },
+    {
+        "query": "What projects may help in biomedical document relation extraction?",
+        "context_dois": [
+            "10.1093/bioinformatics/btaf356"
+        ]
+    },
+    {
+        "query": "How can task-decomposed AI help in design task?",
+        "context_dois": [
+            "10.1115/detc2023-109087"
+        ]
+    },
+    {
+        "query": "What is a blockchain-based LLM?",
+        "context_dois": [
+            "10.1016/j.cie.2025.110889"
+        ]
+    },
+    {
+        "query": "What is type of collaboration between LLMs and cellular networks exists?",
+        "context_dois": [
+            "10.1109/6GNet63182.2024.10765766"
+        ]
+    },
+    {
+        "query": "How do knowledge graphs serve as a source for LLM-powered application?",
+        "context_dois": [
+            "10.1016/j.websem.2024.100858"
+        ]
+    },
+    {
+        "query": "What about probabilistic reasoning using large language models?",
+        "context_dois": [
+            "10.18653/v1/2023.acl-long.68"
+        ]
+    },
+    {
+        "query": "What are the potential benefits and challenges of using VLLMs for radiologic image interpretation?",
+        "context_dois": [
+            "10.1007/s00330-024-11115-6"
+        ]
+    },
+    {
+        "query": "How do LLM for defect interpretation?",
+        "context_dois": [
+            "10.1109/ICSTCC62912.2024.10744745"
+        ]
+    },
+    {
+        "query": "What capabilities does an LLM-based multimodal warning system?",
+        "context_dois": [
+            "10.1109/ITSC58415.2024.10919879"
+        ]
+    },
+    {
+        "query": "What metrics is needed for domain expert evaluation?",
+        "context_dois": [
+            "10.1145/3706599.3719675"
+        ]
+    },
+    {
+        "query": "How can LLMs be instructed for automated coding?",
+        "context_dois": [
+            "10.1177/08944393251349541"
+        ]
+    }
+]

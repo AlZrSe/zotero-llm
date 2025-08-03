@@ -1,0 +1,6 @@
+[
+    {
+        "embedding_model": "jinaai/jina-embeddings-v2-base-en",
+        "embedding_model_size": 768
+    }
+]

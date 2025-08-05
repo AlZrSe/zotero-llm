@@ -58,16 +58,16 @@ class RAGEvaluator:
         ci = stats.t.interval(confidence, len(data)-1, loc=mean, scale=sem)
         return ci
     
-    def __init__(self, rag_config_path: str, query_list_path: str, k_values: List[int] = None, replace: bool = False):
-        """Initialize RAG evaluator with paths to config and query files.
+    def __init__(self, model_config: Dict, query_list_path: str, k_values: List[int] = None, replace: bool = False):
+        """Initialize RAG evaluator for a specific model.
         
         Args:
-            rag_config_path: Path to the RAG configuration file
+            model_config: Configuration dictionary for the embedding model
             query_list_path: Path to the query list file
             k_values: List of K values for Hit Rate@K calculation (default: [1, 3, 5, 10])
             replace: Whether to replace existing collections
         """
-        self.models = self._load_models(rag_config_path)
+        self.model_config = model_config
         self.test_queries = self._load_queries(query_list_path)
         self.results: List[EvaluationResult] = []
         self.log_file = "evaluation/evaluation_log.json"
@@ -112,18 +112,18 @@ class RAGEvaluator:
 
         return hits / len(expected_dois) if expected_dois else 0.0
 
-    def evaluate_model(self, model_config: Dict) -> List[EvaluationResult]:
-        """Evaluate a single embedding model across all test queries."""
+    def evaluate_model(self) -> List[EvaluationResult]:
+        """Evaluate the model across all test queries."""
         model_results = []
 
         # Upload Zotero database and measure upsert time
-        collection_name = f"eval_{model_config['embedding_model'].split('/')[-1]}"
+        collection_name = f"eval_{self.model_config['embedding_model'].split('/')[-1]}"
         
         # Create ResearchAssistant instance with the current model
         assistant = ResearchAssistant(
             embedding_model={
-                "embedding_model": model_config["embedding_model"],
-                "embedding_model_size": model_config["embedding_model_size"]
+                "embedding_model": self.model_config["embedding_model"],
+                "embedding_model_size": self.model_config["embedding_model_size"]
             },
             collection_name=collection_name
         )
@@ -153,8 +153,8 @@ class RAGEvaluator:
             end_time = time.time()
 
             result = EvaluationResult(
-                model_name=model_config["embedding_model"],
-                embedding_dim=model_config["embedding_model_size"],
+                model_name=self.model_config["embedding_model"],
+                embedding_dim=self.model_config["embedding_model_size"],
                 query=query,
                 response_time=end_time - start_time,
                 mean_upsert_time=mean_upsert_time,
@@ -193,16 +193,16 @@ class RAGEvaluator:
         with open(self.log_file, 'w') as f:
             json.dump(log_data, f, indent=2)
 
-    def run_evaluation(self) -> None:
-        """Run evaluation for all models and queries."""
-        for model_config in self.models:
-            print(f"\nEvaluating model: {model_config['embedding_model']}")
-            try:
-                model_results = self.evaluate_model(model_config)
-                self.results.extend(model_results)
-                print(f"✓ Completed evaluation for {model_config['embedding_model']}")
-            except Exception as e:
-                print(f"✗ Error evaluating {model_config['embedding_model']}: {str(e)}")
+    def run_evaluation(self) -> List[EvaluationResult]:
+        """Run evaluation for the model with all test queries."""
+        print(f"\nEvaluating model: {self.model_config['embedding_model']}")
+        try:
+            self.results = self.evaluate_model()
+            print(f"✓ Completed evaluation for {self.model_config['embedding_model']}")
+        except Exception as e:
+            print(f"✗ Error evaluating {self.model_config['embedding_model']}: {str(e)}")
+            raise
+        return self.results
 
     def _calculate_model_statistics(self) -> pd.DataFrame:
         """Calculate comprehensive statistics for each model including all metrics."""
@@ -275,11 +275,7 @@ class RAGEvaluator:
             rows.append(base_row)
         
         # Save detailed results
-        if os.path.exists(output_path):
-            df = pd.read_csv(output_path)
-            df = pd.concat([df, pd.DataFrame(rows)], ignore_index=True)
-        else:
-            df = pd.DataFrame(rows)
+        df = pd.DataFrame(rows)
         df.to_csv(output_path, index=False)
         print(f"\nResults saved to: {output_path}")
         
@@ -292,23 +288,42 @@ class RAGEvaluator:
         stats_df.to_csv(stats_path, index=False, float_format="%.4f", sep=';')
         print(f"Model statistics saved to: {stats_path}")
 
+def load_models(config_path: str) -> List[Dict]:
+    """Load embedding models configuration from JSON file."""
+    with open(config_path, 'r') as f:
+        return json.load(f)
+
 def main():
-    # Initialize evaluator with custom K values if needed
-    evaluator = RAGEvaluator(
-        rag_config_path="evaluation/rag_list.json",
-        query_list_path="evaluation/query_list.json",
-        k_values=[1, 3, 5, 10]  # Customize K values as needed
-    )
+    # Load model configurations
+    models = load_models("evaluation/rag_list.json")
+    k_values = [1, 3, 5, 10]  # Customize K values as needed
+    all_results = []
     
-    # Run evaluation
     print("Starting RAG evaluation...")
-    evaluator.run_evaluation()
     
-    # Save results
-    output_path = "evaluation/rag_evaluation_results.csv"
-    evaluator.save_results(output_path)
+    # Evaluate each model
+    for model_config in models:
+        try:
+            # Initialize evaluator for the current model
+            evaluator = RAGEvaluator(
+                model_config=model_config,
+                query_list_path="evaluation/query_list.json",
+                k_values=k_values
+            )
+            
+            # Run evaluation and collect results
+            model_results = evaluator.run_evaluation()
+            all_results.extend(model_results)
+            
+            # Save incremental results
+            output_path = f"evaluation/rag_evaluation_results_{model_config['embedding_model'].split('/')[-1]}.csv"
+            evaluator.save_results(output_path)
+            
+        except Exception as e:
+            print(f"Error evaluating model {model_config['embedding_model']}: {str(e)}")
+            continue
     
-    print("RAG evaluation completed.")
+    print("RAG evaluation completed successfully.")
 
 if __name__ == "__main__":
     main()

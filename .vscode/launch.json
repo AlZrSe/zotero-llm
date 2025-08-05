@@ -5,11 +5,15 @@
     "version": "0.2.0",
     "configurations": [        
         {
-            "name": "Python: main.py",
-            "type": "python",
+            "name": "Python: Current File",
+            "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/zotero_llm/main.py",
-            "console": "integratedTerminal"
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
         }
     ]
 }

@@ -13,21 +13,22 @@ class ZoteroClient:
 
     def fetch_all_items(self) -> Optional[List[Dict]]:
         """Fetch all items from the Zotero library."""
+
+        def parse_item(item: Dict) -> Dict:
+            """Parse a single Zotero item into a standardized dictionary."""
+            return {
+                'zotero_key': item['key'],
+                'title': item['data'].get('title', ''),
+                'abstract': item['data'].get('abstractNote', ''),
+                'authors': item['data'].get('creators', []),
+                'year': item['data'].get('date', ''),
+                'journal': item['data'].get('publicationTitle', ''),
+                'doi': item['data'].get('DOI', ''),
+                'keywords': [tag['tag'] for tag in item['data'].get('tags', [])],
+            }
         try:
             items = self.client.items(limit=None)  # Fetch up to 5000 items
-            docs = [
-                {
-                    'zotero_key': item['key'],
-                    'title': item['data'].get('title', ''),
-                    'abstract': item['data'].get('abstractNote', ''),
-                    'authors': item['data'].get('creators', []),
-                    'year': item['data'].get('date', ''),
-                    'journal': item['data'].get('publicationTitle', ''),
-                    'doi': item['data'].get('DOI', ''),
-                    'keywords': [tag['tag'] for tag in item['data'].get('tags', [])],
-                }
-                for item in items if item['data']['itemType'] != 'attachment'
-            ]
+            docs = [parse_item(item) for item in items if item['data']['itemType'] != 'attachment']
 
             # Fetch group libraries
             groups = self.client.groups()
@@ -35,19 +36,7 @@ class ZoteroClient:
                 try:
                     group_client = zotero.Zotero(group['id'], 'group', 'local-api-key', local=True)
                     group_items = group_client.items(limit=None)
-                    group_docs = [
-                        {
-                            'zotero_key': item['key'],
-                            'title': item['data'].get('title', ''),
-                            'abstract': item['data'].get('abstractNote', ''),
-                            'authors': item['data'].get('creators', []),
-                            'year': item['data'].get('date', ''),
-                            'journal': item['data'].get('publicationTitle', ''),
-                            'doi': item['data'].get('DOI', ''),
-                            'keywords': [tag['tag'] for tag in item['data'].get('tags', [])],
-                        }
-                        for item in group_items if item['data']['itemType'] != 'attachment'
-                    ]
+                    group_docs = [parse_item(item) for item in group_items if item['data']['itemType'] != 'attachment']
                     docs.extend(group_docs)
                 except Exception as e:
                     print(f"Error fetching group {group['id']}: {e}")

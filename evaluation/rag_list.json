@@ -1,0 +1,86 @@
+[
+  {
+    "embedding_model": "jinaai/jina-embeddings-v2-base-en",
+    "embedding_model_size": 768
+  },
+  {
+    "embedding_model": "BAAI/bge-base-en",
+    "embedding_model_size": 768
+  },
+  {
+    "embedding_model": "BAAI/bge-base-en-v1.5",
+    "embedding_model_size": 768
+  },
+  {
+    "embedding_model": "BAAI/bge-large-en-v1.5",
+    "embedding_model_size": 1024
+  },
+  {
+    "embedding_model": "BAAI/bge-small-en",
+    "embedding_model_size": 384
+  },
+  {
+    "embedding_model": "jinaai/jina-embeddings-v2-base-code",
+    "embedding_model_size": 768
+  },
+  {
+    "embedding_model": "jinaai/jina-embeddings-v2-small-en",
+    "embedding_model_size": 512
+  },
+  {
+    "embedding_model": "mixedbread-ai/mxbai-embed-large-v1",
+    "embedding_model_size": 1024
+  },
+  {
+    "embedding_model": "nomic-ai/nomic-embed-text-v1",
+    "embedding_model_size": 768
+  },
+  {
+    "embedding_model": "nomic-ai/nomic-embed-text-v1.5",
+    "embedding_model_size": 768
+  },
+  {
+    "embedding_model": "nomic-ai/nomic-embed-text-v1.5-Q",
+    "embedding_model_size": 768
+  },
+  {
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "embedding_model_size": 384
+  },
+  {
+    "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "embedding_model_size": 384
+  },
+  {
+    "embedding_model": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+    "embedding_model_size": 768
+  },
+  {
+    "embedding_model": "snowflake/snowflake-arctic-embed-l",
+    "embedding_model_size": 1024
+  },
+  {
+    "embedding_model": "snowflake/snowflake-arctic-embed-m",
+    "embedding_model_size": 768
+  },
+  {
+    "embedding_model": "snowflake/snowflake-arctic-embed-m-long",
+    "embedding_model_size": 768
+  },
+  {
+    "embedding_model": "snowflake/snowflake-arctic-embed-s",
+    "embedding_model_size": 384
+  },
+  {
+    "embedding_model": "snowflake/snowflake-arctic-embed-xs",
+    "embedding_model_size": 384
+  },
+  {
+    "embedding_model": "thenlper/gte-large",
+    "embedding_model_size": 1024
+  },
+  {
+    "embedding_model": "jinaai/jina-embeddings-v3",
+    "embedding_model_size": 1024
+  }
+]

@@ -1,6 +1,7 @@
 from litellm import completion
 from typing import List, Dict, Optional
 from dataclasses import dataclass
+from time import sleep
 
 @dataclass
 class Paper:
@@ -13,15 +14,18 @@ class Paper:
 
 class LLMClient:
     """Class to handle interactions with Language Learning Models."""
-    
-    def __init__(self, model_name: str, base_url: str = None):
+
+    def __init__(self, model_name: str, base_url: str = None, timeout: int = 5, retries: int = 5,
+                 system_prompt: Optional[str] = None):
         """Initialize LLM client with model configuration."""
         self.model_name = model_name
-        self._system_prompt = """You are a research assistant analyzing academic papers.
+        self._system_prompt = system_prompt or """You are a research assistant analyzing academic papers.
         Based on the provided papers and query, provide useful thoughts, summary, insights
         and suggestions. Also, provide citations as numbers in square brackets in mentioned
         sentences with a reference list of the papers used at the end of your response."""
         self.base_url = base_url
+        self.timeout = timeout
+        self.retries = retries
 
     def _format_papers_context(self, papers: List[Dict]) -> str:
         """Format papers into a string context for the LLM."""
@@ -29,6 +33,7 @@ class LLMClient:
         for paper in papers:
             context = (
                 f'Title: {paper.get("title", "")}\n'
+                f'Authors: {", ".join(author.get("name", "") or author.get("lastName", "") for author in paper.get("authors", []))}\n'
                 f'Abstract: {paper.get("abstract", "")}\n'
                 f'Year: {paper.get("year", "")}'
             )
@@ -47,17 +52,25 @@ class LLMClient:
     
     def ask_llm(self, messages: str) -> str:
         """Ask the LLM a question and return its response."""
-        if self.base_url:
-            return completion(
-                model=self.model_name,
-                messages=messages,
-                base_url=self.base_url
-            ).choices[0].message.content
-        else:
-            return completion(
-                model=self.model_name,
-                messages=messages
-            ).choices[0].message.content
+
+        for _ in range(self.retries):
+            try:
+                if self.base_url:
+                    return completion(
+                        model=self.model_name,
+                        messages=messages,
+                        base_url=self.base_url
+                    ).choices[0].message.content
+                else:
+                    return completion(
+                        model=self.model_name,
+                        messages=messages
+                    ).choices[0].message.content
+            except Exception as e:
+                print(f"Error during LLM completion: {e}")
+                sleep(self.timeout)  # Wait before retrying
+
+        raise Exception("Failed to get a response from the LLM after retries.")
 
     def ask_question(self, query: str, papers: List[Dict]) -> str:
         """

@@ -17,7 +17,7 @@
         "retries": 1
     },
     "embedding_model": {
-        "embedding_model": "jinaai/jina-embeddings-v2-base-en",
+        "embedding_model": "nomic-ai/nomic-embed-text-v1.5",
         "embedding_model_size": 768
     }
 }

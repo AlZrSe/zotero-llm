@@ -36,7 +36,7 @@ class RAGEngine:
     def if_collection_exists(self, collection_name: str) -> bool:
         """Check if a collection exists and is not empty."""
         try:
-            return self.client.get_collection(collection_name) is not None
+            return collection_name in [collection['name'] for collection in self.get_collections()]
         except Exception as e:
             print(f"Error checking collection '{collection_name}': {e}")
         return False

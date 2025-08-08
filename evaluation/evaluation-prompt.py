@@ -5,6 +5,7 @@ from pathlib import Path
 import hashlib
 import pickle
 from datetime import datetime
+import math
 
 from tqdm import tqdm
 
@@ -32,6 +33,12 @@ from scipy import stats
 
 CACHE_DIR = Path("evaluation/prompt_cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+def try_float(v):
+   try:
+       return float(v)
+   except Exception:
+       return np.nan
 
 @dataclass
 class PromptEvaluationResult:
@@ -264,7 +271,8 @@ Low Performing Metrics:
             # Calculate summary statistics
             valid_ratio = sum(1 for r in results if r.judge_verdict == "Valid") / len(results)
             avg_review_scores = {
-                metric: np.mean([r.judge_metrics[metric] for r in results if metric in r.judge_metrics])
+                metric: np.mean([try_float(r.judge_metrics[metric]) for r in results
+                                 if metric in r.judge_metrics])
                 for metric in results[0].judge_metrics.keys()
             }
             

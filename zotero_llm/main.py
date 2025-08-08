@@ -74,7 +74,6 @@ class ResearchAssistant:
         if not self.rag.test_connection():
             self.debug_print("❌ Failed to connect to Qdrant.")
             success = False
-            exit(1)
         else:
             self.debug_print("✅ Connected to local Qdrant server successfully!")
 

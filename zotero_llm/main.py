@@ -18,7 +18,8 @@ from zotero_llm.llm import LLMClient, extract_json_from_response
 class ResearchAssistant:
     DEFAULT_COLLECTION = "zotero_llm_abstracts"
 
-    def __init__(self, embedding_model = None, collection_name = None):
+    def __init__(self, embedding_model = None, collection_name = None,
+                 answers_llm: Optional[Dict] = None):
         """Initialize the Research Assistant with its components."""
         self.log_file = "zotero_llm.log"
         self.debug_messages = []
@@ -27,7 +28,9 @@ class ResearchAssistant:
         embedding_model = embedding_model or self.llm_config.get('embedding_model', {})
         self.collection_name = collection_name or ResearchAssistant.DEFAULT_COLLECTION
         self.rag = RAGEngine(**embedding_model, collection_name=self.collection_name)
-        self.llm = LLMClient(**self.llm_config['answer_llm'])
+
+        answers_llm = answers_llm or self.llm_config.get('answers_llm', {})
+        self.llm = LLMClient(**answers_llm)
         if 'review_llm' in self.llm_config:
             self.llm_review = LLMClient(**self.llm_config['review_llm'])
         else:

@@ -109,8 +109,8 @@ class LLMClient:
         return [
             {"role": "user", "content": self._system_prompt.format(**kwargs)}
         ]
-    
-    def ask_llm(self, messages: str) -> str:
+
+    def ask_llm(self, messages: List[Dict[str, str]]) -> str:
         """Ask the LLM a question and return its response."""
 
         for _ in range(self.retries):

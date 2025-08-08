@@ -1,6 +1,7 @@
 from qdrant_client import QdrantClient, models
 from typing import List, Dict, Optional
 from itertools import batched
+from tqdm import tqdm
 
 class RAGEngine:
 
@@ -84,7 +85,7 @@ class RAGEngine:
             ]
 
             # Upload in batches
-            for batch in batched(points, 128):
+            for batch in batched(tqdm(points, desc="Uploading documents to Qdrant"), 128):
                 self.client.upsert(collection_name=coll_name, points=batch)
             print(f"Uploaded {len(documents)} documents to collection '{coll_name}'")
 

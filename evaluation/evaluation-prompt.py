@@ -168,9 +168,14 @@ Low Performing Metrics:
                 "model_name": model_name,
                 "system_prompt": prompt,
                 "timeout": self.model_config.get("timeout", 30) * 3,
-                "base_url": self.model_config.get("base_url", "http://localhost:1234/v1"),
+                # "base_url": self.model_config.get("base_url", "http://localhost:1234/v1"),
             }
         )
+
+        success, _ = assistant._initialize_system()
+        if not success:
+            print(f"Error initializing assistant with model {model_name}")
+            return []
 
         for query_data in tqdm(self.test_queries):
             query = query_data["query"]

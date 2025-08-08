@@ -1,3 +1,4 @@
+# python=3.12
 python-dotenv>=1.0.0
 openai>=1.3.0
 pyzotero
@@ -6,4 +7,7 @@ rich>=13.0.0
 requests>=2.31.0
 qdrant-client[fastembed]>=1.14.2
 mistralai>=1.0.0
-litellm
+litellm[proxy]
+gradio
+scipy
+tqdm

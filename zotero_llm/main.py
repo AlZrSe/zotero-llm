@@ -13,12 +13,13 @@ import gradio as gr
 from typing import Dict, Optional, Tuple
 from zotero_llm.zotero import ZoteroClient
 from zotero_llm.rag import RAGEngine
-from zotero_llm.llm import LLMClient
+from zotero_llm.llm import LLMClient, extract_json_from_response
 
 class ResearchAssistant:
     DEFAULT_COLLECTION = "zotero_llm_abstracts"
 
-    def __init__(self, embedding_model = None, collection_name = None):
+    def __init__(self, embedding_model = None, collection_name = None,
+                 answers_llm: Optional[Dict] = None):
         """Initialize the Research Assistant with its components."""
         self.log_file = "zotero_llm.log"
         self.debug_messages = []
@@ -27,7 +28,13 @@ class ResearchAssistant:
         embedding_model = embedding_model or self.llm_config.get('embedding_model', {})
         self.collection_name = collection_name or ResearchAssistant.DEFAULT_COLLECTION
         self.rag = RAGEngine(**embedding_model, collection_name=self.collection_name)
-        self.llm = LLMClient(**self.llm_config['answer_llm'])
+
+        answers_llm = answers_llm or self.llm_config.get('answers_llm', {})
+        self.llm = LLMClient(**answers_llm)
+        if 'review_llm' in self.llm_config:
+            self.llm_review = LLMClient(**self.llm_config['review_llm'])
+        else:
+            self.llm_review = None
 
         # Initialize status states
         self.zotero_status = gr.State(False)
@@ -67,7 +74,6 @@ class ResearchAssistant:
         if not self.rag.test_connection():
             self.debug_print("❌ Failed to connect to Qdrant.")
             success = False
-            exit(1)
         else:
             self.debug_print("✅ Connected to local Qdrant server successfully!")
 
@@ -131,14 +137,25 @@ class ResearchAssistant:
             
             # Log the interaction
             with open(self.log_file, 'a', encoding='utf-8') as log_file:
-                log_file.write(f"Query: {query}\nResponse: {analysis}\n\n\n")
-            
+                log_file.write(f"\n\n\nQuery: {query}\nResponse: {analysis}")
+
+            if self.llm_review:
+                messages = self.llm_review.create_messages(query=query, context=context, response=analysis)
+                review_analysis = self.llm_review.ask_llm(messages)
+                review_json = extract_json_from_response(review_analysis)
+                self.debug_print(f"INFO: Review analysis: {json.dumps(review_json, indent=4)}")
+
+                with open(self.log_file, 'a', encoding='utf-8') as log_file:
+                    log_file.write(f"\n\nReview analysis: {json.dumps(review_json, indent=4)}")
+
+                return analysis, self.get_debug_output(), review_json, review_analysis
+
             self.debug_print("SUCCESS: Query processed successfully")
-            return analysis, self.get_debug_output()
+            return analysis, self.get_debug_output(), {}, ""
         except Exception as e:
             error_msg = f"Error during analysis: {str(e)}"
             self.debug_print(f"ERROR: {error_msg}")
-            return error_msg, self.get_debug_output()
+            return error_msg, self.get_debug_output(), {}, ""
 
     def create_interface(self) -> gr.Blocks:
         """Create and configure the Gradio interface."""
@@ -202,17 +219,20 @@ class ResearchAssistant:
             )
             
             # Set up event handlers
+            review_json = gr.JSON(visible=False)
+            review_analysis = gr.Textbox(visible=False)
+            
             submit_btn.click(
                 fn=self.process_query,
                 inputs=query_input,
-                outputs=[analysis_output, debug_output]
+                outputs=[analysis_output, debug_output, review_json, review_analysis]
             )
 
             # Add Ctrl+Enter shortcut
             query_input.submit(
                 fn=self.process_query,
                 inputs=query_input,
-                outputs=[analysis_output, debug_output],
+                outputs=[analysis_output, debug_output, review_json, review_analysis],
                 api_name=False  # Prevent API endpoint creation
             )#.then(
             #     None,  # No additional function to call

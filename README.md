@@ -55,7 +55,87 @@ python zotero_llm/main.py
 
 4. Go to [http://0.0.0.0:7860](http://0.0.0.0:7860) to open web interface and start querying.
 
-## Evaluation of RAG
+## Evaluation
+
+The project includes two types of evaluation:
+
+### Prompt Evaluation
+
+To optimize and evaluate the system prompts for LLMs:
+
+1. Make sure you have a test query list in `evaluation/query_list.json`:
+```json
+[
+    {
+        "query": "What are the main approaches to LLM evaluation?",
+        "context_dois": [
+            "10.xxxx/xxx.xxxx.xxxxx"
+        ]
+    }
+]
+```
+
+2. Run the prompt evaluation script:
+```bash
+python evaluation/evaluation-prompt.py
+```
+
+The script will:
+- Start with the current prompt from `llm_config.json`
+- For each iteration:
+  - Test the prompt with all queries
+  - Calculate performance metrics
+  - Analyze weaknesses and issues
+  - Suggest prompt improvements
+  - Allow you to accept/reject changes
+- Save results to `evaluation/prompt_results/[model_name]/`:
+  - `iteration_N/prompt.txt`: The prompt used in each iteration
+  - `iteration_N/results.csv`: Detailed metrics
+  - `iteration_N/responses.json`: All responses and their weaknesses
+- Cache all results to avoid redundant API calls
+- Update `llm_config.json` with improved prompts
+
+The evaluation metrics include:
+
+1. **Query Understanding Score** (0-1.0)
+   - Measures how well the system interprets and addresses the user's question
+   - Perfect score (1.0) indicates complete understanding and appropriate response focus
+
+2. **Retrieval Quality** (0-1.0)
+   - Assesses relevance of retrieved Zotero excerpts to the query
+   - Score of 1.0 means ALL retrieved context is relevant
+   - Lower scores indicate irrelevant or partially relevant context
+
+3. **Generation Quality** (0-1.0)
+   - Evaluates how effectively the answer uses the provided context
+   - Perfect score (1.0) indicates optimal use of context without omissions
+   - Considers accuracy, completeness, and coherence
+
+4. **Error Detection Score** (0-1.0)
+   - Measures system's ability to identify and handle:
+     - Missing context
+     - Contradictory information
+     - Outdated or insufficient data
+   - High scores indicate proper identification of limitations
+
+5. **Citation Integrity** (0-1.0)
+   - Evaluates accuracy of source attributions
+   - Checks correctness of citations and references
+   - Verifies proper linking between claims and sources
+
+6. **Hallucination Index** (0-1.0)
+   - Measures presence of unsupported claims
+   - 0.0 means no hallucinations
+   - Scores increase with number of unsupported statements
+   - Value of 1.0 indicates multiple unsupported claims
+
+The system is considered "Valid" when it:
+- Correctly identifies missing/contradictory/outdated context
+- Maintains high citation integrity
+- Shows minimal hallucination
+- Demonstrates good query understanding and context usage
+
+### RAG Evaluation
 
 To evaluate the RAG retrieval performance with different embedding models:
 

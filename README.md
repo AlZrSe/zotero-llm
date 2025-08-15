@@ -59,6 +59,52 @@ python zotero_llm/main.py
 
 The project includes two types of evaluation:
 
+### RAG Evaluation
+
+To evaluate the RAG retrieval performance with different embedding models:
+
+1. Configure the embedding models to evaluate in `evaluation/rag_list.json`:
+```json
+[
+    {
+        "embedding_model": "jinaai/jina-embeddings-v2-base-en",
+        "embedding_model_size": 768
+    }
+]
+```
+
+2. For evaluation purposes with provided query list (p. 3) you must add public group library into your account [Review LLM](https://www.zotero.org/groups/6056275/review_llm), which have a large library of review articles about LLM with titles and abstracts. For those click in menu File > New Library > New Group... , authorize if needed, select `Search for Groups` and in search box enter `Review LLM` or go to link above, and select red button `Join`. Synchronize all library. Your evaluation library ready.
+
+3. Set up test queries with expected DOIs in `evaluation/query_list.json` (ground truth or golden standard):
+```json
+[
+    {
+        "query": "Which LLM's are helpful for developing cloud-native software?",
+        "context_dois": [
+            "10.1016/j.future.2025.107947"
+        ]
+    }
+]
+```
+
+4. Run the evaluation script:
+```bash
+python evaluation/evaluation-rag.py
+```
+
+The script will:
+- Test each embedding model with the provided queries
+- Calculate metrics:
+  - Mean Reciprocal Rank (MRR)
+  - Hit Rate@K (for K = 1, 3, 5, 10)
+  - Response times
+  - Mean upsert times
+- Generate confidence intervals for all metrics
+- Append results to:
+  - `evaluation/rag_evaluation_results.csv`: Detailed results for each query
+  - `evaluation/model_stats.csv`: Aggregated statistics per model
+  - `evaluation/evaluation_log.json`: Detailed evaluation logs
+
 ### Prompt Evaluation
 
 To optimize and evaluate the system prompts for LLMs:
@@ -134,52 +180,6 @@ The system is considered "Valid" when it:
 - Maintains high citation integrity
 - Shows minimal hallucination
 - Demonstrates good query understanding and context usage
-
-### RAG Evaluation
-
-To evaluate the RAG retrieval performance with different embedding models:
-
-1. Configure the embedding models to evaluate in `evaluation/rag_list.json`:
-```json
-[
-    {
-        "embedding_model": "jinaai/jina-embeddings-v2-base-en",
-        "embedding_model_size": 768
-    }
-]
-```
-
-2. For evaluation purposes with provided query list (p. 3) you must add public group library into your account [Review LLM](https://www.zotero.org/groups/6056275/review_llm), which have a large library of review articles about LLM with titles and abstracts. For those click in menu File > New Library > New Group... , authorize if needed, select `Search for Groups` and in search box enter `Review LLM` or go to link above, and select red button `Join`. Synchronize all library. Your evaluation library ready.
-
-3. Set up test queries with expected DOIs in `evaluation/query_list.json` (ground truth or golden standard):
-```json
-[
-    {
-        "query": "Which LLM's are helpful for developing cloud-native software?",
-        "context_dois": [
-            "10.1016/j.future.2025.107947"
-        ]
-    }
-]
-```
-
-4. Run the evaluation script:
-```bash
-python evaluation/evaluation-rag.py
-```
-
-The script will:
-- Test each embedding model with the provided queries
-- Calculate metrics:
-  - Mean Reciprocal Rank (MRR)
-  - Hit Rate@K (for K = 1, 3, 5, 10)
-  - Response times
-  - Mean upsert times
-- Generate confidence intervals for all metrics
-- Append results to:
-  - `evaluation/rag_evaluation_results.csv`: Detailed results for each query
-  - `evaluation/model_stats.csv`: Aggregated statistics per model
-  - `evaluation/evaluation_log.json`: Detailed evaluation logs
 
 ## License
 

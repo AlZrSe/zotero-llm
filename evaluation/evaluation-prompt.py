@@ -146,15 +146,10 @@ Low Performing Metrics:
         )
 
         # Create assistant for prompt improvement
+        improvement_model = self.model_config.copy()
+        improvement_model["system_prompt"] = ""
         improvement_assistant = ResearchAssistant(
-            answers_llm={
-                "model_name": self.model_config["model_name"],
-                "system_prompt": "You are an expert at improving system prompts. Analyze the evaluation results and suggest specific improvements.",
-                "timeout": self.model_config["timeout"],
-                "input_params": {
-                    "temperature": 0
-                }
-            }
+            answers_llm=improvement_model
         )
 
         return improvement_assistant.llm.ask_llm([{"role": "user", "content": improvement_prompt}])
@@ -164,21 +159,16 @@ Low Performing Metrics:
         hash_str = hashlib.md5(f"{model_name}|||{prompt}|||{query}".encode()).hexdigest()
         return CACHE_DIR / f"{hash_str}.json"
 
-    def evaluate_prompt(self, prompt: str) -> List[PromptEvaluationResult]:
+    def evaluate_prompt(self) -> List[PromptEvaluationResult]:
         """Evaluate a prompt across all test queries."""
         results = []
         
         # Create ResearchAssistant instance with the current prompt
         model_name = self.model_config["model_name"]
+        prompt = self.model_config["system_prompt"]
         assistant = ResearchAssistant(
-            answers_llm={
-                "model_name": model_name,
-                "system_prompt": prompt,
-                "timeout": self.model_config.get("timeout", 30) * 3,
-                # "base_url": self.model_config.get("base_url", "http://localhost:1234/v1"),
-            }
+            answers_llm={**self.model_config},
         )
-
         success, _ = assistant._initialize_system()
         if not success:
             print(f"Error initializing assistant with model {model_name}")
@@ -263,17 +253,20 @@ Low Performing Metrics:
             print("Evaluating current prompt...")
             
             # Evaluate current prompt
-            results = self.evaluate_prompt(current_prompt)
+            results = self.evaluate_prompt()
             
             # Save iteration results
             self.save_iteration_results(results)
             
             # Calculate summary statistics
+            judge_metrics_names = set()
+            for r in results:
+                judge_metrics_names.update(r.judge_metrics.keys())
             valid_ratio = sum(1 for r in results if r.judge_verdict == "Valid") / len(results)
             avg_review_scores = {
                 metric: np.mean([try_float(r.judge_metrics[metric]) for r in results
                                  if metric in r.judge_metrics])
-                for metric in results[0].judge_metrics.keys()
+                for metric in judge_metrics_names
             }
             
             print("\nCurrent Results:")
@@ -294,9 +287,22 @@ Low Performing Metrics:
             
             # Extract new prompt from tags
             try:
-                # improved_prompt = improvement_response[improvement_response.find("<prompt>")+8:improvement_response.find("</prompt>")].strip()
-
+                # Remove any text before </think> tag if present
+                think_end = improvement_response.find('</think>')
+                if think_end != -1:
+                    improvement_response = improvement_response[think_end + 8:].strip()
+                
                 improved_prompt = improvement_response.strip()
+
+                # Check if required placeholders are present
+                required_placeholders = [("\n\nQUERY: ", "{query}"), ("\n\nCONTEXT: ", "{context}")]
+                missing_placeholders = [p for p in required_placeholders if p[1] not in improved_prompt]
+
+                if missing_placeholders:
+                    print("\nWarning: Adding missing required placeholders:", ", ".join(missing_placeholders))
+                    # If the prompt hasn't query and context placeholder, add both placeholders
+                    for name, placeholder in missing_placeholders:
+                        improved_prompt = improved_prompt.rstrip() + f"{name}{placeholder}"
                 
                 print("\nImproved Prompt:")
                 print("=" * 80)
@@ -311,15 +317,17 @@ Low Performing Metrics:
                 # Get user approval
                 decision = input("\nUse this improved prompt? (y/n): ").lower()
                 if decision == 'y':
-                    current_prompt = improved_prompt
+                    self.model_config["system_prompt"] = improved_prompt
                     print("Using improved prompt for next iteration.")
                     # Save the new prompt to config file
                     with open("llm_config.json", 'r+') as f:
                         config = json.load(f)
-                        config["answer_llm"]["system_prompt"] = current_prompt
+                        config["answer_llm"]["system_prompt"] = improved_prompt
                         f.seek(0)
                         json.dump(config, f, indent=2)
                         f.truncate()
+
+                    self.current_iteration += 1
 
             except ValueError:
                 print("Error: Could not extract prompt from improvement suggestion.")
@@ -331,7 +339,6 @@ Low Performing Metrics:
                 if decision != 'y':
                     print("Optimization completed.")
                     break
-                self.current_iteration += 1
 
 def main():
     # Load LLM config

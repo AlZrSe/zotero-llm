@@ -77,15 +77,25 @@ class ResearchAssistant:
         else:
             self.debug_print("✅ Connected to local Qdrant server successfully!")
 
-        # Ensure collection exists
+        # Check what count of documents is equal to Zotero items count
+        zotero_documents = self.zotero.fetch_all_items() or []
+        zotero_documents = [doc for doc in zotero_documents if doc['title'] != '' or doc['abstract'] != '' or len(doc.get('keywords', [])) > 0]
+        zotero_count = len(zotero_documents)
+        rag_count = self.rag.client.count(collection_name=self.collection_name)
+
         if not self.rag.if_collection_exists(self.collection_name):
             self.debug_print(f"⚠️ Creating collection '{self.collection_name}'...")
             documents = self.zotero.fetch_all_items()
             if documents:
                 self.rag.upload_documents(documents)
                 self.debug_print(f"✅ Collection '{self.collection_name}' created successfully!")
+        elif rag_count.count != zotero_count:
+            self.debug_print(f"⚠️ Collection '{self.collection_name}' exists but is out of sync. Recreating...")
+            self.rag.client.delete_collection(self.collection_name)
+            documents = self.zotero.fetch_all_items()
+            self.rag.upload_documents(documents, collection_name=self.collection_name)
         else:
-            self.debug_print(f"✅ Collection '{self.collection_name}' exists.")
+            self.debug_print(f"✅ Collection '{self.collection_name}' is in sync.")
 
         return success, "\n".join(messages)
     
@@ -266,7 +276,6 @@ def main():
         )
     except Exception as e:
         print(f"Error starting the application: {str(e)}")
-        exit(1)
 
 if __name__ == "__main__":
     main()

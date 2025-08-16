@@ -42,27 +42,28 @@ class RAGEngine:
             print(f"Error checking collection '{collection_name}': {e}")
         return False
 
-    def upload_documents(self, documents: List[Dict], collection_name = None) -> None:
+    def upload_documents(self, documents: List[Dict], collection_name = None, start_index = 0) -> None:
         """Upload documents to a specific collection in Qdrant."""
         coll_name = collection_name or self.collection_name
 
         try:
-            # Create collection if it doesn't exist
-            self.client.create_collection(
-                collection_name=coll_name,
-                sparse_vectors_config={
-                    "bm25": models.SparseVectorParams(
-                        modifier=models.Modifier.IDF,
-                    )
-                },
-                vectors_config={
-                    'semantic': models.VectorParams(
-                        size=self.embedding_model_size,
-                        distance=models.Distance.COSINE
-                    )
-                }
-            )
-            print(f"Collection '{coll_name}' created successfully.")
+            if not self.if_collection_exists(coll_name):
+                # Create collection if it doesn't exist
+                self.client.create_collection(
+                    collection_name=coll_name,
+                    sparse_vectors_config={
+                        "bm25": models.SparseVectorParams(
+                            modifier=models.Modifier.IDF,
+                        )
+                    },
+                    vectors_config={
+                        'semantic': models.VectorParams(
+                            size=self.embedding_model_size,
+                            distance=models.Distance.COSINE
+                        )
+                    }
+                )
+                print(f"Collection '{coll_name}' created successfully.")
 
             # Prepare points for upload
             points = [
@@ -80,7 +81,7 @@ class RAGEngine:
                     },
                     payload=doc
                 )
-                for i, doc in enumerate(documents)
+                for i, doc in enumerate(documents, start=start_index)
                 if doc['title'] != '' or doc['abstract'] != '' or len(doc.get('keywords', [])) > 0
             ]
 
@@ -91,6 +92,16 @@ class RAGEngine:
 
         except Exception as e:
             print(f"Error uploading documents: {e}")
+
+    def delete_documents(self, document_ids: List[int], collection_name = None) -> None:
+        """Delete documents from a specific collection in Qdrant."""
+        coll_name = collection_name or self.collection_name
+
+        try:
+            self.client.delete(collection_name=coll_name, points_selector=document_ids)
+            print(f"Deleted documents from collection '{coll_name}': {len(document_ids)}")
+        except Exception as e:
+            print(f"Error deleting documents: {e}")
 
     def search_documents(self, query: str, collection_name = None, limit: int = 5) -> List[Dict]:
         """Search for documents in a specific collection using a query."""

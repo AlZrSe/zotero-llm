@@ -322,7 +322,7 @@ Low Performing Metrics:
                     # Save the new prompt to config file
                     with open("llm_config.json", 'r+') as f:
                         config = json.load(f)
-                        config["answer_llm"]["system_prompt"] = improved_prompt
+                        config["answers_llm"]["system_prompt"] = improved_prompt
                         f.seek(0)
                         json.dump(config, f, indent=2)
                         f.truncate()
@@ -345,8 +345,8 @@ def main():
     with open("llm_config.json", 'r') as f:
         config = json.load(f)
 
-    # Use the answer_llm configuration
-    model_config = config["answer_llm"]
+    # Use the answers_llm configuration
+    model_config = config["answers_llm"]
     
     print(f"Starting prompt optimization for model: {model_config['model_name']}")
     

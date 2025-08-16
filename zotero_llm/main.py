@@ -10,7 +10,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 import gradio as gr
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any, List
 from zotero_llm.zotero import ZoteroClient
 from zotero_llm.rag import RAGEngine
 from zotero_llm.llm import LLMClient, extract_json_from_response
@@ -77,18 +77,88 @@ class ResearchAssistant:
         else:
             self.debug_print("✅ Connected to local Qdrant server successfully!")
 
-        # Ensure collection exists
+        # Check what count of documents is equal to Zotero items count
+        zotero_documents = self.zotero.fetch_all_items() or []
+        zotero_documents = [doc for doc in zotero_documents if doc['title'] != '' or doc['abstract'] != '' or len(doc.get('keywords', [])) > 0]
+
         if not self.rag.if_collection_exists(self.collection_name):
             self.debug_print(f"⚠️ Creating collection '{self.collection_name}'...")
-            documents = self.zotero.fetch_all_items()
-            if documents:
-                self.rag.upload_documents(documents)
+            if zotero_documents:
+                self.rag.upload_documents(zotero_documents)
                 self.debug_print(f"✅ Collection '{self.collection_name}' created successfully!")
         else:
-            self.debug_print(f"✅ Collection '{self.collection_name}' exists.")
+            self.debug_print(f"⚠️ Updating collection '{self.collection_name}'...")
+            self.update_collection(self.collection_name, zotero_documents)
+            self.debug_print(f"✅ Collection '{self.collection_name}' updated successfully!")
 
         return success, "\n".join(messages)
-    
+
+    def update_collection(self, collection_name: str, documents: List[Dict[str, Any]]) -> None:
+        """Update the main Zotero collection in Qdrant."""
+
+        def get_zotero_keys_qdrant(collection_name, batch_size=1000):
+            zotero_keys = []
+            qdrant_ids = []
+            offset = None
+
+            while True:
+                try:
+                    result = self.rag.client.scroll(collection_name=collection_name,
+                                                    limit=batch_size,
+                                                    offset=offset,
+                                                    with_payload=True,
+                                                    with_vectors=False
+                    )
+                    
+                    points = result[0]
+                    
+                    # Извлекаем zotero_key
+                    batch_keys = []
+                    batch_ids = []
+                    for point in points:
+                        try:
+                            if point.payload and 'zotero_key' in point.payload:
+                                batch_keys.append(point.payload['zotero_key'])
+                                batch_ids.append(point.id)
+                        except Exception as e:
+                            self.debug_print(f"Error processing point {point.id}: {e}")
+                            continue
+                    
+                    zotero_keys.extend(batch_keys)
+                    qdrant_ids.extend(batch_ids)
+                    self.debug_print(f"Processed {len(points)} documents, founded {len(batch_keys)} keys.")
+
+                    # Проверяем следующую страницу
+                    next_offset = result[1]
+                    if next_offset is None:
+                        break
+                        
+                    offset = next_offset
+                    
+                except Exception as e:
+                    self.debug_print(f"Error fetching Zotero keys: {e}")
+
+            self.debug_print(f"Extracted {len(zotero_keys)} Zotero keys")
+            return zotero_keys, qdrant_ids
+        
+        # Get all payloads from Qdrant
+        qdrant_keys_list, qdrant_ids = get_zotero_keys_qdrant(collection_name)
+        qdrant_keys = set(qdrant_keys_list)
+        zotero_documents = self.zotero.fetch_all_items() or []
+        zotero_keys = set([doc['zotero_key'] for doc in zotero_documents if doc['title'] != '' or doc['abstract'] != '' or len(doc.get('keywords', [])) > 0])
+
+        # Compare and update documents as needed
+        need_upload = list(zotero_keys - qdrant_keys)
+        need_delete = list(qdrant_keys - zotero_keys)
+
+        if need_upload:
+            upload_documents = [doc for doc in zotero_documents if doc['zotero_key'] in need_upload]
+            self.rag.upload_documents(upload_documents, collection_name=collection_name, start_index=max(qdrant_ids) + 1)
+
+        if need_delete:
+            key_ids = [item[1] for item in zip(qdrant_keys_list, qdrant_ids) if item[0] in need_delete]
+            self.rag.delete_documents(key_ids, collection_name=collection_name)
+
     def upload_documents(self, collection_name: Optional[str] = None) -> None:
         """Upload documents to the specified collection."""
         collection_name = collection_name or self.collection_name
@@ -266,7 +336,6 @@ def main():
         )
     except Exception as e:
         print(f"Error starting the application: {str(e)}")
-        exit(1)
 
 if __name__ == "__main__":
     main()

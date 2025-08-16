@@ -21,7 +21,7 @@ pip install -r requirements.txt
 
 4. Prepare LLM config file `llm_config.json` with the following configuration sections:
 
-- `answer_llm` - parameters for the primary LLM that generates answers
+- `answers_llm` - parameters for the primary LLM that generates answers
 - `review_llm` - parameters for the LLM that reviews generated answers
 - `judge_llm` - parameters for the LLM that makes final judgments
 

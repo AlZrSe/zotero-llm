@@ -1,5 +1,6 @@
 from pyzotero import zotero
 from typing import List, Dict, Optional
+from datetime import date
 
 class ZoteroClient:
     def __init__(self):
@@ -27,7 +28,7 @@ class ZoteroClient:
                 'keywords': [tag['tag'] for tag in item['data'].get('tags', [])],
             }
         try:
-            items = self.client.items(limit=None)  # Fetch up to 5000 items
+            items = self.client.items(limit=None)  # Fetch all items
             docs = [parse_item(item) for item in items if item['data']['itemType'] != 'attachment']
 
             # Fetch group libraries
@@ -56,3 +57,18 @@ class ZoteroClient:
             return True
         except Exception:
             return False
+
+    def get_zotero_update_date(self) -> Optional[date]:
+        """Get the last updated date of the Zotero library."""
+        try:
+            zotero_main = [self.client.items(limit=1, sort='dateModified', order='desc')]
+            groups = self.client.groups()
+            for group in groups:
+                group_client = zotero.Zotero(group['id'], 'group', 'local-api-key', local=True)
+                group_item = group_client.items(limit=1, sort='dateModified', order='desc')
+                zotero_main.append(group_item)
+
+            return max([item['data'].get('dateModified', None) for item in zotero_main])
+        except Exception as e:
+            print(f"Error fetching library info: {e}")
+            return None

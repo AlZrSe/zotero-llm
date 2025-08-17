@@ -17,10 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Copy entrypoint script
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x docker/entrypoint.sh
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["docker/entrypoint.sh"]

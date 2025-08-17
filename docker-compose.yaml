@@ -6,13 +6,17 @@ services:
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
-      - ZOTERO_URL=http://zotero:3000
+      # Use host.docker.internal to connect to local Zotero Desktop
+      - ZOTERO_HOST=host.docker.internal
+      - ZOTERO_PORT=23119
     volumes:
-      - ./.env:/app/.env
-      - ./docker/entrypoint.sh:/entrypoint.sh
+      - ./evaluation:/app/evaluation
+    ports:
+      - "7860:7860"  # Web interface port
     depends_on:
       - qdrant
-      - zotero
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   qdrant:
@@ -22,15 +26,3 @@ services:
     ports:
       - "6333:6333"
       - "6334:6334"
-
-  zotero:
-    image: lscr.io/linuxserver/zotero:latest
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Etc/UTC
-    volumes:
-      - ./zotero_config:/config
-    ports:
-      - "5900:5900"  # VNC port
-      - "3000:3000"  # Optional web interface port

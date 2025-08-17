@@ -117,16 +117,21 @@ class RAGEngine:
                             model=self.embedding_model_name,
                         ),
                         using="semantic",
-                        limit=limit * 10,
+                        limit=(5 * limit),
+                    ),
+                    models.Prefetch(
+                        query=models.Document(
+                            text=query,
+                            model="Qdrant/bm25",
+                        ),
+                        using="bm25",
+                        limit=(5 * limit),
                     )
                 ],
-                query=models.Document(
-                    text=query,
-                    model="Qdrant/bm25",
-                ),
-                using="bm25",
-                limit=limit,
+                # Fusion query enables fusion on the prefetched results
+                query=models.FusionQuery(fusion=models.Fusion.RRF),
                 with_payload=True,
+                limit=limit,
             )
             # Return payload with search scores
             if results.points:

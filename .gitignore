@@ -4,3 +4,10 @@
 zotero_llm.log
 zotero_config
 qdrant_storage
+.gradio/certificate.pem
+notebooks/1.ipynb
+evaluation/evaluation_log.json
+evaluation/model_stats.*
+evaluation/rag_evaluation_results_*.csv
+evaluation/prompt_cache/*
+evaluation/prompt_results/*

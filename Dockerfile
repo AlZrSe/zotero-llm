@@ -3,9 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    python3-dev \
+RUN apt-get update && apt-get upgrade -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -17,10 +15,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Copy entrypoint script
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x docker/entrypoint.sh
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-ENTRYPOINT ["/entrypoint.sh"]
+# ENTRYPOINT ["docker/entrypoint.sh"]
+ENTRYPOINT ["python", "zotero_llm/main.py"]

@@ -12,14 +12,21 @@ This project provides a simple yet powerful integration between Zotero and LLMs 
 ## Setup
 
 1. Run a Zotero Desktop. Go to Edit > Settings > Advanced and check "Allow other application on this computer communicate with Zotero".
-2. Copy `.env.example` to `.env` file and edit with your credentials.
 
-3. Install dependencies:
+2. Create virtual environment in conda:
+```bash
+conda create -n zotero-llm python=3.12 pip
+conda activate zotero-llm
+```
+
+3. Copy `.env.example` to `.env` file and edit with your credentials.
+
+4. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Prepare LLM config file `llm_config.json` with the following configuration sections:
+5. Prepare LLM config file `zotero_llm/llm_config.json` with the following configuration sections:
 
 - `answers_llm` - parameters for the primary LLM that generates answers
 - `review_llm` - parameters for the LLM that reviews generated answers

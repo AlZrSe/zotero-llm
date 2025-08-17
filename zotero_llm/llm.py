@@ -76,7 +76,7 @@ class LLMClient:
     """Class to handle interactions with Language Learning Models."""
 
     def __init__(self, model_name: str, base_url: str = None, timeout: int = 5, retries: int = 5,
-                 system_prompt: Optional[str] = None, input_params: Dict = {}):
+                 system_prompt: Optional[str] = None, input_params: Dict = {}, rewrite_prompt: Optional[str] = None):
         """Initialize LLM client with model configuration."""
         self.model_name = model_name
         self._system_prompt = system_prompt or """You are a research assistant analyzing academic papers.
@@ -87,6 +87,7 @@ class LLMClient:
         self.timeout = timeout
         self.retries = retries
         self.input_params = input_params
+        self.rewrite_prompt = rewrite_prompt
 
     def format_papers_context(self, papers: List[Dict]) -> str:
         """Format papers into a string context for the LLM."""
@@ -133,6 +134,13 @@ class LLMClient:
                 sleep(self.timeout)  # Wait before retrying
 
         raise Exception("Failed to get a response from the LLM after retries.")
+    
+    def rewrite_query(self, query: str) -> str:
+        """Rewrite the user's query using the rewrite prompt."""
+        if self.rewrite_prompt:
+            messages = [{"role": "user", "content": self.rewrite_prompt.format(query=query)}]
+            return self.ask_llm(messages)
+        return query
 
     def ask_question(self, query: str, papers: List[Dict]) -> str:
         """

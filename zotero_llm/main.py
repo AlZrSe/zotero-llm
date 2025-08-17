@@ -200,7 +200,9 @@ class ResearchAssistant:
     def process_query(self, query: str) -> Tuple[str, str]:
         """Process a research query and return analysis results."""
         try:
-            self.debug_print(f"INFO: Processing query: {query}")
+            self.debug_print(f"INFO: Rewriting query: {query}")
+            query = self.llm.rewrite_query(query)
+            self.debug_print(f"INFO: Processed query: {query}")
             context = self.rag.search_documents(query)
             context = sorted(context, key=lambda x: x['year'])
             analysis = self.llm.ask_question(query, context)

@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from dotenv import load_dotenv
 import os
 import sys
@@ -14,6 +15,7 @@ from typing import Dict, Optional, Tuple, Any, List
 from zotero_llm.zotero import ZoteroClient
 from zotero_llm.rag import RAGEngine
 from zotero_llm.llm import LLMClient, extract_json_from_response
+from zotero_llm.models import init_db, get_session, Interaction
 
 class ResearchAssistant:
     DEFAULT_COLLECTION = "zotero_llm_abstracts"
@@ -35,6 +37,11 @@ class ResearchAssistant:
             self.llm_review = LLMClient(**self.llm_config['review_llm'])
         else:
             self.llm_review = None
+
+        # Initialize database
+        db_path = os.path.join(project_root, "metrics.db")
+        self.engine = init_db(f"sqlite:///{db_path}")
+        self.db_session = get_session(self.engine)
 
         # Initialize status states
         self.zotero_status = gr.State(False)
@@ -197,11 +204,11 @@ class ResearchAssistant:
             "🟢" if llm_ok else "🔴"
         ]
 
-    def process_query(self, query: str) -> Tuple[str, str]:
+    def process_query(self, message: str, history: Optional[List] = None) -> str:
         """Process a research query and return analysis results."""
         try:
-            self.debug_print(f"INFO: Rewriting query: {query}")
-            query = self.llm.rewrite_query(query)
+            self.debug_print(f"INFO: Rewriting query: {message}")
+            query = self.llm.rewrite_query(message)
             self.debug_print(f"INFO: Processed query: {query}")
             context = self.rag.search_documents(query)
             context = sorted(context, key=lambda x: x['year'])
@@ -211,6 +218,14 @@ class ResearchAssistant:
             with open(self.log_file, 'a', encoding='utf-8') as log_file:
                 log_file.write(f"\n\n\nQuery: {query}\nResponse: {analysis}")
 
+            # Store interaction in database
+            interaction = Interaction(
+                query=message,
+                processed_query=query,
+                response=analysis,
+                used_documents=[doc['doi'] for doc in context]
+            )
+
             if self.llm_review:
                 messages = self.llm_review.create_messages(query=query, context=context, response=analysis)
                 review_analysis = self.llm_review.ask_llm(messages)
@@ -219,15 +234,36 @@ class ResearchAssistant:
 
                 with open(self.log_file, 'a', encoding='utf-8') as log_file:
                     log_file.write(f"\n\nReview analysis: {json.dumps(review_json, indent=4)}")
+                
+                # Store review metrics
+                if isinstance(review_json, dict):
+                    interaction.summary = review_json.get('summary', None)
+                    interaction.verdict = review_json.get('verdict', None)
+                    if isinstance(review_json.get('metrics'), dict):
+                        metrics_json = review_json['metrics']
+                    else:
+                        metrics_json = review_json
+                    interaction.query_understanding_score = metrics_json.get('query_understanding_score', None)
+                    interaction.retrieval_quality = metrics_json.get('retrieval_quality', None)
+                    interaction.generation_quality = metrics_json.get('generation_quality', None)
+                    interaction.error_detection_score = metrics_json.get('error_detection_score', None)
+                    interaction.citation_integrity = metrics_json.get('citation_integrity', None)
+                    interaction.hallucination_index = metrics_json.get('hallucination_index', None)
+                    if isinstance(review_json.get('strengths'), list):
+                        interaction.strengths = review_json['strengths']
+                    if isinstance(review_json.get('weaknesses'), list):
+                        interaction.weaknesses = review_json['weaknesses']
 
-                return analysis, self.get_debug_output(), review_json, review_analysis
+            # Save to database
+            self.db_session.add(interaction)
+            self.db_session.commit()
 
             self.debug_print("SUCCESS: Query processed successfully")
-            return analysis, self.get_debug_output(), {}, ""
+            return analysis
         except Exception as e:
             error_msg = f"Error during analysis: {str(e)}"
             self.debug_print(f"ERROR: {error_msg}")
-            return error_msg, self.get_debug_output(), {}, ""
+            return error_msg
 
     def create_interface(self) -> gr.Blocks:
         """Create and configure the Gradio interface."""
@@ -256,69 +292,28 @@ class ResearchAssistant:
             
             gr.Markdown("---")
             
-            # Query interface
-            with gr.Row():
-                with gr.Column(scale=8):
-                    query_input = gr.Textbox(
-                        lines=3,
-                        placeholder="Enter your research question...",
-                        label="Research Question"
-                    )
-                with gr.Column(scale=1):
-                    submit_btn = gr.Button("Ask", variant="primary")
-            
-            analysis_output = gr.Textbox(
-                lines=10,
-                label="LLM Analysis"
-            )
-            
-            debug_output = gr.Textbox(
-                lines=5,
-                label="Debug Output",
-                value=self.get_debug_output(),
-                interactive=False,
-                visible=False
-            )
-            
-            # Examples
-            gr.Examples(
+            # Chat interface with thumbs up/down for feedback
+            chatbot = gr.ChatInterface(
+                fn=self.process_query,
                 examples=[
-                    ["What are the main themes in my library about machine learning?"],
-                    ["Summarize the recent papers about natural language processing."],
-                    ["What are the key findings about deep learning architectures?"]
+                    "What are the main themes in my library about machine learning?",
+                    "Summarize the recent papers about natural language processing.",
+                    "What are the key findings about deep learning architectures?"
                 ],
-                inputs=query_input
+                title="Research Assistant Chat",
+                description="Ask questions about your Zotero library and get AI-powered insights.",
+                analytics_enabled=False,
+                autofocus=True,
+                flagging_mode="manual",
+                flagging_options=["👍", "👎"],
+                flagging_dir="./",
+                type="messages"
             )
-            
-            # Set up event handlers
-            review_json = gr.JSON(visible=False)
-            review_analysis = gr.Textbox(visible=False)
-            
-            submit_btn.click(
-                fn=self.process_query,
-                inputs=query_input,
-                outputs=[analysis_output, debug_output, review_json, review_analysis]
-            )
-
-            # Add Ctrl+Enter shortcut
-            query_input.submit(
-                fn=self.process_query,
-                inputs=query_input,
-                outputs=[analysis_output, debug_output, review_json, review_analysis],
-                api_name=False  # Prevent API endpoint creation
-            )#.then(
-            #     None,  # No additional function to call
-            #     _js="""() => {
-            #         // Focus back on the input after submission
-            #         document.querySelector('textarea').focus();
-            #     }"""
-            # )
             
             # Update status LEDs every 30 seconds
             interface.load(
                 fn=self.update_status_leds,
-                outputs=[zotero_led, qdrant_led, llm_led],
-                # every=30  # Update every 30 seconds
+                outputs=[zotero_led, qdrant_led, llm_led]
             )
             
             # Initial status update

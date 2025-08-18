@@ -43,6 +43,21 @@ Each block have parameters:
     - `embedding_model`: The model to use for generating embeddings (e.g., "jinaai/jina-embeddings-v2-base-en")
     - `embedding_model_size`: Dimension size of the embedding vectors (e.g., 768)
 
+6. Install Grafana for visualization of metrics:
+- Run Grafana docker image by command:
+```bash
+docker run -d -p 3000:3000 --name=grafana --volume "$PWD/grafana:/var/lib/grafana" grafana/grafana-enterprise
+```
+- Enter to Grafana CLI and install SQLite datasource plugin by command
+```bash
+docker exec -it grafana grafana-cli plugins install frser-sqlite-datasource
+```
+and restart Grafana:
+```bash
+docker restart grafana
+```
+- Go to [http://localhost:3000/](Grafana Dashboards), change password at first time (default `admin/admin`).
+
 ## Usage
 
 1. Run Zotero Desktop

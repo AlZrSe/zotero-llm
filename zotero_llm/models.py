@@ -26,7 +26,7 @@ class Interaction(Base):
     hallucination_index = Column(Float, nullable=True)
 
     # User feedback
-    # user_rating = Column(Integer, nullable=True)  # +1 and -1
+    user_rating = Column(Integer, nullable=True)  # +1 and -1
 
     # Store context info
     used_documents = Column(JSON, nullable=True)  # Store zotero keys of used documents

@@ -36,6 +36,18 @@ class Interaction(Base):
     strengths = Column(JSON, nullable=True)
     weaknesses = Column(JSON, nullable=True)
 
+    # Answer LLM tracking
+    llm_model = Column(String, nullable=True)
+    llm_tokens_used = Column(Integer, nullable=True)
+    llm_cost = Column(Float, nullable=True)
+    llm_response_time = Column(Float, nullable=True)
+
+    # Review LLM tracking
+    review_llm_model = Column(String, nullable=True)
+    review_llm_tokens_used = Column(Integer, nullable=True)
+    review_llm_cost = Column(Float, nullable=True)
+    review_llm_response_time = Column(Float, nullable=True)
+
 def init_db(db_path: str = "sqlite:///grafana/metrics.db"):
     """Initialize the database and create tables."""
     engine = create_engine(db_path)

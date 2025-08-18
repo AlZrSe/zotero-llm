@@ -14,7 +14,7 @@ import gradio as gr
 from typing import Dict, Optional, Tuple, Any, List
 from zotero_llm.zotero import ZoteroClient
 from zotero_llm.rag import RAGEngine
-from zotero_llm.llm import LLMClient, extract_json_from_response
+from zotero_llm.llm import LLMClient, extract_json_from_response, usage
 from zotero_llm.models import init_db, get_session, Interaction
 
 class ResearchAssistant:
@@ -207,6 +207,7 @@ class ResearchAssistant:
     def process_query(self, message: str, history: Optional[List] = None) -> str:
         """Process a research query and return analysis results."""
         try:
+            usage.reset()
             self.debug_print(f"INFO: Rewriting query: {message}")
             query = self.llm.rewrite_query(message)
             self.debug_print(f"INFO: Processed query: {query}")
@@ -218,19 +219,33 @@ class ResearchAssistant:
             with open(self.log_file, 'a', encoding='utf-8') as log_file:
                 log_file.write(f"\n\n\nQuery: {query}\nResponse: {analysis}")
 
-            # Store interaction in database
+            usage_summary = usage.summarize()
+
+            # Store interaction and usage in database 
             interaction = Interaction(
                 query=message,
                 processed_query=query,
                 response=analysis,
-                used_documents=[doc['doi'] for doc in context]
+                used_documents=[doc['doi'] for doc in context],
+                llm_model = self.llm.model_name,
+                llm_tokens_used = usage_summary['tokens_in'] + usage_summary['tokens_out'],
+                llm_cost = usage_summary['cost_estimate'],
+                llm_response_time = usage_summary['duration']
             )
 
             if self.llm_review:
+                usage.reset()
                 messages = self.llm_review.create_messages(query=query, context=context, response=analysis)
                 review_analysis = self.llm_review.ask_llm(messages)
                 review_json = extract_json_from_response(review_analysis)
                 self.debug_print(f"INFO: Review analysis: {json.dumps(review_json, indent=4)}")
+
+                usage_summary = usage.summarize()
+
+                interaction.review_llm_model = self.llm_review.model_name
+                interaction.review_llm_tokens_used = usage_summary['tokens_in'] + usage_summary['tokens_out']
+                interaction.review_llm_cost = usage_summary['cost_estimate']
+                interaction.review_llm_response_time = usage_summary['duration']
 
                 with open(self.log_file, 'a', encoding='utf-8') as log_file:
                     log_file.write(f"\n\nReview analysis: {json.dumps(review_json, indent=4)}")
@@ -306,7 +321,7 @@ class ResearchAssistant:
                 autofocus=True,
                 flagging_mode="manual",
                 flagging_options=["👍", "👎"],
-                flagging_dir="./",
+                flagging_dir="./grafana/",
                 type="messages"
             )
             

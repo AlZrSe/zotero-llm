@@ -39,7 +39,7 @@ class ResearchAssistant:
             self.llm_review = None
 
         # Initialize database
-        db_path = os.path.join(project_root, "metrics.db")
+        db_path = os.path.join(project_root, "grafana/metrics.db")
         self.engine = init_db(f"sqlite:///{db_path}")
         self.db_session = get_session(self.engine)
 

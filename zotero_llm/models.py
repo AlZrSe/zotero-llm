@@ -13,6 +13,7 @@ class Interaction(Base):
     query = Column(String, nullable=False)
     response = Column(String, nullable=False)
     timestamp = Column(DateTime, default=datetime.now)
+    timestamp_unix = Column(Integer, nullable=True, default=lambda: int(datetime.now().timestamp()))
 
     # Judge metrics
     summary = Column(String, nullable=True)
@@ -35,7 +36,7 @@ class Interaction(Base):
     strengths = Column(JSON, nullable=True)
     weaknesses = Column(JSON, nullable=True)
 
-def init_db(db_path: str = "sqlite:///metrics.db"):
+def init_db(db_path: str = "sqlite:///grafana/metrics.db"):
     """Initialize the database and create tables."""
     engine = create_engine(db_path)
     Base.metadata.create_all(engine)

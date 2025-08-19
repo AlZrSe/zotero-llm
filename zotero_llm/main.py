@@ -204,6 +204,58 @@ class ResearchAssistant:
             "🟢" if llm_ok else "🔴"
         ]
 
+    def get_latest_metrics_markdown(self) -> str:
+        """Return Markdown with LLM-as-a-Judge metrics for the latest interaction."""
+        try:
+            interaction = (
+                self.db_session.query(Interaction)
+                .order_by(Interaction.id.desc())
+                .first()
+            )
+            if not interaction:
+                return "### LLM-as-a-Judge\nNo metric data available. Ask a question to get an answer evaluation."
+
+            def fmt(value):
+                return "—" if value is None else (f"{value:.3f}" if isinstance(value, (int, float)) else str(value))
+
+            lines = [
+                "### LLM-as-a-Judge",
+                f"**Summary**: {fmt(interaction.summary)}\n",
+                f"**Verdict**: {fmt(interaction.verdict)}",
+                "",
+                "**Metrics**:",
+                f"- Query understanding: {fmt(interaction.query_understanding_score)}",
+                f"- Retrieval quality: {fmt(interaction.retrieval_quality)}",
+                f"- Generation quality: {fmt(interaction.generation_quality)}",
+                f"- Error detection: {fmt(interaction.error_detection_score)}",
+                f"- Citation integrity: {fmt(interaction.citation_integrity)}",
+                f"- Hallucination index: {fmt(interaction.hallucination_index)}",
+            ]
+            return "\n".join(lines)
+        except Exception as e:
+            self.debug_print(f"ERROR: Failed to render metrics: {str(e)}")
+            return "### LLM-as-a-Judge\nError rendering metrics."
+
+    def save_user_feedback(self, rating: int) -> str:
+        """Save user feedback (like/dislike) to the last interaction record."""
+        try:
+            # Get the last interaction from the database
+            last_interaction = self.db_session.query(Interaction).order_by(Interaction.id.desc()).first()
+            
+            if last_interaction:
+                # Update the user_rating field
+                last_interaction.user_rating = rating
+                self.db_session.commit()
+                
+                rating_text = "👍 Like" if rating == 1 else "👎 Dislike"
+                return f"✅ Thank you for your feedback! Your review '{rating_text}' has been saved."
+            else:
+                return "❌ No records found to rate."
+                
+        except Exception as e:
+            self.debug_print(f"ERROR: Failed to save user feedback: {str(e)}")
+            return f"❌ Error saving feedback: {str(e)}"
+
     def process_query(self, message: str, history: Optional[List] = None) -> str:
         """Process a research query and return analysis results."""
         try:
@@ -307,22 +359,60 @@ class ResearchAssistant:
             
             gr.Markdown("---")
             
-            # Chat interface with thumbs up/down for feedback
-            chatbot = gr.ChatInterface(
-                fn=self.process_query,
-                examples=[
-                    "What are the main themes in my library about machine learning?",
-                    "Summarize the recent papers about natural language processing.",
-                    "What are the key findings about deep learning architectures?"
-                ],
-                title="Research Assistant Chat",
-                description="Ask questions about your Zotero library and get AI-powered insights.",
-                analytics_enabled=False,
-                autofocus=True,
-                flagging_mode="manual",
-                flagging_options=["👍", "👎"],
-                flagging_dir="./grafana/",
-                type="messages"
+            with gr.Row():
+                left_col = gr.Column(scale=3)
+                right_col = gr.Column(scale=1)
+
+                # Right: Metrics panel (empty at startup)
+                with right_col:
+                    metrics_panel = gr.Markdown("")
+
+                # Define wrapper that returns answer + metrics
+                def process_query_and_metrics(message, history=None):
+                    answer = self.process_query(message, history)
+                    return answer, self.get_latest_metrics_markdown()
+
+                # Left: Chat interface
+                with left_col:
+                    chat = gr.ChatInterface(
+                        fn=process_query_and_metrics,
+                        examples=[
+                            "What are the main themes in my library about machine learning?",
+                            "Summarize the recent papers about natural language processing.",
+                            "What are the key findings about deep learning architectures?"
+                        ],
+                        title="Research Assistant Chat",
+                        description="Ask questions about your Zotero library and get AI-powered insights.",
+                        analytics_enabled=False,
+                        autofocus=True,
+                        type="messages",
+                        additional_outputs=[metrics_panel]
+                    )
+                    # Feedback buttons row
+                    with gr.Row():
+                        gr.Markdown("**Rate the quality of the answer:**")
+                    with gr.Row():
+                        like_btn = gr.Button("👍 Like", variant="primary", size="sm")
+                        dislike_btn = gr.Button("👎 Dislike", variant="secondary", size="sm")
+                        feedback_status = gr.Markdown("", visible=False)
+
+            # Feedback button handlers
+            def handle_like():
+                result = self.save_user_feedback(1)
+                return gr.Markdown(result, visible=False)
+            
+            def handle_dislike():
+                result = self.save_user_feedback(-1)
+                return gr.Markdown(result, visible=False)
+            
+            like_btn.click(
+                fn=handle_like,
+                outputs=[feedback_status]
+            )
+            
+            dislike_btn.click(
+                fn=handle_dislike,
+                outputs=[feedback_status]
             )
             
             # Update status LEDs every 30 seconds

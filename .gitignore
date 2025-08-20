@@ -11,3 +11,4 @@ evaluation/model_stats.*
 evaluation/rag_evaluation_results_*.csv
 evaluation/prompt_cache/*
 evaluation/prompt_results/*
+grafana/plugins/*

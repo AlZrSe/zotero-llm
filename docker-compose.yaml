@@ -6,8 +6,8 @@ services:
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
-      # Use host.docker.internal to connect to local Zotero Desktop
-      - ZOTERO_URL=host.docker.internal
+      # Use localhost through extra_hosts mapping
+      - ZOTERO_URL=http://localhost:23119
       - ZOTERO_PORT=23119
     volumes:
       - ./evaluation:/app/evaluation
@@ -16,8 +16,10 @@ services:
     depends_on:
       - qdrant
     extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: unless-stopped
+      - "localhost:host-gateway"
+    # restart: unless-stopped
+    networks:
+      - zotero-network
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -26,3 +28,9 @@ services:
     ports:
       - "6333:6333"
       - "6334:6334"
+    networks:
+      - zotero-network
+
+networks:
+  zotero-network:
+    driver: bridge

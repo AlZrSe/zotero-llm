@@ -51,7 +51,6 @@ docker run -d -p 3000:3000 --name=grafana --volume "$PWD/grafana:/var/lib/grafan
 - Enter to Grafana CLI and install SQLite datasource plugin by commands
 ```bash
 docker exec -it grafana grafana-cli plugins install frser-sqlite-datasource
-docker exec -it grafana grafana-cli plugins install yesoreyeram-infinity-datasource
 ```
 and restart Grafana:
 ```bash

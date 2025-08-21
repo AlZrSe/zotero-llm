@@ -11,6 +11,8 @@ This project provides a simple yet powerful integration between Zotero and LLMs 
 
 ## Setup
 
+### 1. Standalone install
+
 1. Run a Zotero Desktop. Go to Edit > Settings > Advanced and check "Allow other application on this computer communicate with Zotero".
 **OR**
 Create new or use existing Zotero account, go to [Settings](https://www.zotero.org/settings/security), scroll to section "Applications" and press "Create new private key" and make new one, then write it to `.env` file in `ZOTERO_API_KEY = "your key"`. Also write `ZOTERO_USER_ID` from numbers at the and of line "User ID: Your user ID for use in API calls is".
@@ -28,22 +30,14 @@ conda activate zotero-llm
 pip install -r requirements.txt
 ```
 
-5. Prepare LLM config file `zotero_llm/llm_config.json` with the following configuration sections:
+### 2. Docker compose
 
-- `answers_llm` - parameters for the primary LLM that generates answers
-- `review_llm` - parameters for the LLM that reviews generated answers
-- `judge_llm` - parameters for the LLM that makes final judgments
+Due Zotero Desktop local connection limitation, there isn't able to add it to `docker-compose.yaml`. Then, `docker-compose` only run main code and it's dependencies.
 
-Each block have parameters:
-- `model_name`: The name of the LLM model to be used (e.g., "mistral/mistral-medium-latest", "openrouter/deepseek/deepseek-r1-0528:free"). Model name must have a prefix with corresponding provider. For information look liteLLM documentation.
-- `system_prompt`: Initial instructions/context provided to the LLM that defines its behavior and role
-- `base_url`: API endpoint URL for the model
-- `timeout`: Maximum time in seconds to wait between retries of the LLM response, in seconds (e.g., 5)
-- `retries`: Number of retry attempts if the request fails
-
-- `embedding_model` - parameters for the vector embeddings
-    - `embedding_model`: The model to use for generating embeddings (e.g., "jinaai/jina-embeddings-v2-base-en")
-    - `embedding_model_size`: Dimension size of the embedding vectors (e.g., 768)
+1. In root folder of cloned repository run
+```bash
+docker-compose up -d
+```
 
 ## Usage
 

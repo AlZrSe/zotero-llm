@@ -4,7 +4,7 @@ This project provides a simple yet powerful integration between Zotero and LLMs 
 
 ## Features
 
-- Connect to Zotero Desktop library
+- Connect to Zotero library
 - Analyze research papers and their metadata
 - Generate insights and summaries using LLM
 - Interactive web interface for easy querying
@@ -12,6 +12,8 @@ This project provides a simple yet powerful integration between Zotero and LLMs 
 ## Setup
 
 1. Run a Zotero Desktop. Go to Edit > Settings > Advanced and check "Allow other application on this computer communicate with Zotero".
+**OR**
+Create new or use existing Zotero account, go to [Settings](https://www.zotero.org/settings/security), scroll to section "Applications" and press "Create new private key" and make new one, then write it to `.env` file in `ZOTERO_API_KEY = "your key"`. Also write `ZOTERO_USER_ID` from numbers at the and of line "User ID: Your user ID for use in API calls is".
 
 2. Create virtual environment in conda:
 ```bash

@@ -24,7 +24,10 @@ class ResearchAssistant:
         self.log_file = "zotero_llm.log"
         self.debug_messages = []
         self.llm_config = self._llm_config()
-        self.zotero = ZoteroClient()
+        self.zotero = ZoteroClient(
+            user_id=os.getenv("ZOTERO_USER_ID", None),
+            api_key=os.getenv("ZOTERO_API_KEY", None)
+        )
         embedding_model = embedding_model or self.llm_config.get('embedding_model', {})
         self.collection_name = collection_name or ResearchAssistant.DEFAULT_COLLECTION
         self.rag = RAGEngine(**embedding_model, collection_name=self.collection_name)
@@ -144,15 +147,14 @@ class ResearchAssistant:
         # Get all payloads from Qdrant
         qdrant_keys_list, qdrant_ids = get_zotero_keys_qdrant(collection_name)
         qdrant_keys = set(qdrant_keys_list)
-        zotero_documents = self.zotero.fetch_all_items() or []
-        zotero_keys = set([doc['zotero_key'] for doc in zotero_documents if doc['title'] != '' or doc['abstract'] != '' or len(doc.get('keywords', [])) > 0])
+        zotero_keys = set([doc['zotero_key'] for doc in documents if doc['title'] != '' or doc['abstract'] != '' or len(doc.get('keywords', [])) > 0])
 
         # Compare and update documents as needed
         need_upload = list(zotero_keys - qdrant_keys)
         need_delete = list(qdrant_keys - zotero_keys)
 
         if need_upload:
-            upload_documents = [doc for doc in zotero_documents if doc['zotero_key'] in need_upload]
+            upload_documents = [doc for doc in documents if doc['zotero_key'] in need_upload]
             self.rag.upload_documents(upload_documents, collection_name=collection_name, start_index=max(qdrant_ids) + 1)
 
         if need_delete:

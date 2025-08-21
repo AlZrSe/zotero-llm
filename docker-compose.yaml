@@ -3,20 +3,17 @@ version: '3.8'
 services:
   zotero-llm:
     build: .
+    env_file:
+      - .env
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
-      # Use localhost through extra_hosts mapping
-      - ZOTERO_URL=http://localhost:23119
-      - ZOTERO_PORT=23119
     volumes:
       - ./evaluation:/app/evaluation
     ports:
       - "7860:7860"  # Web interface port
     depends_on:
       - qdrant
-    extra_hosts:
-      - "localhost:host-gateway"
     # restart: unless-stopped
     networks:
       - zotero-network

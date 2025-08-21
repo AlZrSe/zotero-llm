@@ -21,6 +21,9 @@ class ResearchAssistant:
     def __init__(self, embedding_model = None, collection_name = None,
                  answers_llm: Optional[Dict] = None):
         """Initialize the Research Assistant with its components."""
+        # Load environment variables early
+        load_dotenv()
+
         self.log_file = "zotero_llm.log"
         self.debug_messages = []
         self.llm_config = self._llm_config()
@@ -30,7 +33,9 @@ class ResearchAssistant:
         )
         embedding_model = embedding_model or self.llm_config.get('embedding_model', {})
         self.collection_name = collection_name or ResearchAssistant.DEFAULT_COLLECTION
-        self.rag = RAGEngine(**embedding_model, collection_name=self.collection_name)
+
+        self.rag = RAGEngine(**embedding_model, collection_name=self.collection_name,
+                             server_url=f'http://{os.getenv('QDRANT_HOST')}:{os.getenv('QDRANT_PORT')}')
 
         answers_llm = answers_llm or self.llm_config.get('answers_llm', {})
         self.llm = LLMClient(**answers_llm)
@@ -233,9 +238,10 @@ class ResearchAssistant:
 
     def create_interface(self) -> gr.Blocks:
         """Create and configure the Gradio interface."""
+        # Try initialize, but don't block UI on failure
         success, status = self._initialize_system()
         if not success:
-            raise RuntimeError(f"Failed to initialize system:\n{status}")
+            self.debug_print(f"Startup warning: initialization failed, UI will still launch.\n{status}")
 
         with gr.Blocks(theme=gr.themes.Soft()) as interface:
             gr.Markdown("# Zotero-LLM Research Assistant")

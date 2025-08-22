@@ -12,6 +12,5 @@ evaluation/rag_evaluation_results_*.csv
 evaluation/prompt_cache/*
 evaluation/prompt_results/*
 log.csv
-grafana/metrics.db
+grafana/*
 migrations/versions/__pycache__/*
-grafana/plugins/*

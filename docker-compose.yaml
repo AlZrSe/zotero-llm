@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  zotero-llm:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+    volumes:
+      - ./evaluation:/app/evaluation
+    ports:
+      - "7860:7860"  # Web interface port
+    depends_on:
+      - qdrant
+    # restart: unless-stopped
+    networks:
+      - zotero-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - ./qdrant_storage:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    networks:
+      - zotero-network
+
+networks:
+  zotero-network:
+    driver: bridge

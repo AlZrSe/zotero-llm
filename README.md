@@ -30,14 +30,22 @@ conda activate zotero-llm
 pip install -r requirements.txt
 ```
 
-### 2. Docker compose
+5. Prepare LLM config file `zotero_llm/llm_config.json` with the following configuration sections:
 
-Due Zotero Desktop local connection limitation, there isn't able to add it to `docker-compose.yaml`. Then, `docker-compose` only run main code and it's dependencies.
+- `answers_llm` - parameters for the primary LLM that generates answers
+- `review_llm` - parameters for the LLM that reviews generated answers
+- `judge_llm` - parameters for the LLM that makes final judgments
 
-1. In root folder of cloned repository run
-```bash
-docker-compose up -d
-```
+Each block have parameters:
+- `model_name`: The name of the LLM model to be used (e.g., "mistral/mistral-medium-latest", "openrouter/deepseek/deepseek-r1-0528:free"). Model name must have a prefix with corresponding provider. For information look liteLLM documentation.
+- `system_prompt`: Initial instructions/context provided to the LLM that defines its behavior and role
+- `base_url`: API endpoint URL for the model
+- `timeout`: Maximum time in seconds to wait between retries of the LLM response, in seconds (e.g., 5)
+- `retries`: Number of retry attempts if the request fails
+
+- `embedding_model` - parameters for the vector embeddings
+    - `embedding_model`: The model to use for generating embeddings (e.g., "jinaai/jina-embeddings-v2-base-en")
+    - `embedding_model_size`: Dimension size of the embedding vectors (e.g., 768)
 
 6. Install Grafana for visualization of metrics:
 - Run Grafana docker image by command:
@@ -54,16 +62,27 @@ docker restart grafana
 ```
 - Go to [http://localhost:3000/](Grafana Dashboards), change password at first time (default `admin/admin`).
 
+### 2. Docker compose
+
+Due Zotero Desktop local connection limitation, there isn't able to add it to `docker-compose.yaml`. Then, `docker-compose` only run main code and it's dependencies.
+
+1. In root folder of cloned repository run
+```bash
+docker-compose up -d
+```
+then make a config of Grafana as mentioned in p.6 above.
+
 ## Usage
+
+### 1. Standalone install
 
 1. Run Zotero Desktop
 
-2. Run Qdrant Docker image:
+2. Run Qdrant and Grafana Docker images:
 
 ```bash
-docker run -d -p 6333:6333 -p 6334:6334 \
-   -v "./qdrant_storage:/qdrant/storage:z" \
-   qdrant/qdrant
+docker run -d -p 6333:6333 -p 6334:6334 -v "./qdrant_storage:/qdrant/storage:z" qdrant/qdrant
+docker run -d -p 3000:3000 --name=grafana --volume "$PWD/grafana:/var/lib/grafana" grafana/grafana-enterprise
 ```
 
 3. Run the main script:
@@ -72,6 +91,14 @@ python zotero_llm/main.py
 ```
 
 4. Go to [http://0.0.0.0:7860](http://0.0.0.0:7860) to open web interface and start querying.
+
+
+### 2. Docker compose
+
+Simply run
+```bash
+docker-compose up -d
+```
 
 ## Evaluation
 

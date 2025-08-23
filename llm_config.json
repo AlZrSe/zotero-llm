@@ -22,7 +22,7 @@
     "retries": 1
   },
   "embedding_model": {
-    "embedding_model": "nomic-ai/nomic-embed-text-v1.5",
-    "embedding_model_size": 768
+    "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "embedding_model_size": 384
   }
 }

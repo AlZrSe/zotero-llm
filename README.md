@@ -68,7 +68,7 @@ Due Zotero Desktop local connection limitation, there isn't able to add it to `d
 
 1. In root folder of cloned repository run
 ```bash
-docker-compose up -d
+docker-compose up -d --build
 ```
 then make a config of Grafana as mentioned in p.6 above.
 

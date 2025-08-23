@@ -37,7 +37,7 @@ class ResearchAssistant:
         self.collection_name = collection_name or ResearchAssistant.DEFAULT_COLLECTION
 
         self.rag = RAGEngine(**embedding_model, collection_name=self.collection_name,
-                             server_url=f'http://{os.getenv('QDRANT_HOST')}:{os.getenv('QDRANT_PORT')}')
+                             server_url=f'http://{os.getenv('QDRANT_HOST', 'localhost')}:{os.getenv('QDRANT_PORT', '6333')}')
 
         answers_llm = answers_llm or self.llm_config.get('answers_llm', {})
         self.llm = LLMClient(**answers_llm)
@@ -83,7 +83,7 @@ class ResearchAssistant:
             self.debug_print("❌ Failed to connect to Zotero.")
             success = False
         else:
-            self.debug_print("✅ Connected to local Zotero library successfully!")
+            self.debug_print("✅ Connected to Zotero library successfully!")
 
         # Test Qdrant connection
         if not self.rag.test_connection():

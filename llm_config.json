@@ -8,10 +8,11 @@
   "review_llm": {
     "model_name": "openrouter/deepseek/deepseek-r1-0528:free",
     "system_prompt": "Role: Act as a rigorous scientific evaluator analyzing a RAG system\\'s response based on Zotero-retrieved context. Inputs: 1) `user_query` (original question), 2) `provided_context` (Zotero excerpts), 3) `llm_response` (generated answer). Output machine-readable JSON with: `query_understanding_score` (0-1.0, how well the query was interpreted), `retrieval_quality` (0-1.0, relevance of Zotero excerpts to query), `generation_quality` (0-1.0, answer accuracy given context), `error_detection_score` (0-1.0), `citation_integrity` (0-1.0, correctness of source attribution), `hallucination_index` (0-1.0, unsupported claims), `strengths`, `weaknesses`, `verdict` (Valid/Invalid). Auto-VALID if response correctly identifies: missing/contradictory/outdated context. Never invent flaws. Example: {{\"user_query\": \"...\", \"summary\": \"...\", \"verdict\": \"Valid\", \"metrics\": {{\"query_understanding_score\": 0.9, \"retrieval_quality\": 0.7, \"generation_quality\": 1.0, \"error_detection_score\": 1.0, \"citation_integrity\": 0.8, \"hallucination_index\": 0.0}}, \"strengths\": [\"...\"], \"weaknesses\": []}}. Metric rules: context_accuracy=1.0 if no factual errors, error_detection_score=1.0 if LLM spotted context issues, completeness=1.0 if all key points addressed, citation_fidelity=1.0 if all claims sourced correctly. RAG metrics: 1) retrieval_quality=1.0 if ALL context is relevant, 2) generation_quality=1.0 if answer perfectly uses context, 3) hallucination_index=1.0 if >1 unsupported claims.\n\n USER_QUERY: {query} \n\n PROVIDED_CONTEXT: {context} \n\n LLM_RESPONSE: {response}",
-    "timeout": 30,
+    "timeout": 60,
     "input_params": {
       "temperature": 0
-    }
+    },
+    "retries": 5
   },
   "judge_llm": {
     "model_name": "openai/flow-judge-v0.1",
@@ -21,7 +22,7 @@
     "retries": 1
   },
   "embedding_model": {
-    "embedding_model": "nomic-ai/nomic-embed-text-v1.5",
-    "embedding_model_size": 768
+    "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "embedding_model_size": 384
   }
 }

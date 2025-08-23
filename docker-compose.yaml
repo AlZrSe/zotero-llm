@@ -28,6 +28,16 @@ services:
     networks:
       - zotero-network
 
+  grafana:
+    image: grafana/grafana-enterprise:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana:/var/lib/grafana
+    networks:
+      - zotero-network
+    restart: unless-stopped
+
 networks:
   zotero-network:
     driver: bridge

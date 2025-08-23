@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from dotenv import load_dotenv
 import os
 import sys
@@ -13,7 +14,8 @@ import gradio as gr
 from typing import Dict, Optional, Tuple, Any, List
 from zotero_llm.zotero import ZoteroClient
 from zotero_llm.rag import RAGEngine
-from zotero_llm.llm import LLMClient, extract_json_from_response
+from zotero_llm.llm import LLMClient, extract_json_from_response, usage
+from zotero_llm.models import init_db, get_session, Interaction
 
 class ResearchAssistant:
     DEFAULT_COLLECTION = "zotero_llm_abstracts"
@@ -35,7 +37,7 @@ class ResearchAssistant:
         self.collection_name = collection_name or ResearchAssistant.DEFAULT_COLLECTION
 
         self.rag = RAGEngine(**embedding_model, collection_name=self.collection_name,
-                             server_url=f'http://{os.getenv('QDRANT_HOST')}:{os.getenv('QDRANT_PORT')}')
+                             server_url=f'http://{os.getenv('QDRANT_HOST', 'localhost')}:{os.getenv('QDRANT_PORT', '6333')}')
 
         answers_llm = answers_llm or self.llm_config.get('answers_llm', {})
         self.llm = LLMClient(**answers_llm)
@@ -43,6 +45,11 @@ class ResearchAssistant:
             self.llm_review = LLMClient(**self.llm_config['review_llm'])
         else:
             self.llm_review = None
+
+        # Initialize database
+        db_path = os.path.join(project_root, "grafana/metrics.db")
+        self.engine = init_db(f"sqlite:///{db_path}")
+        self.db_session = get_session(self.engine)
 
         # Initialize status states
         self.zotero_status = gr.State(False)
@@ -76,7 +83,7 @@ class ResearchAssistant:
             self.debug_print("❌ Failed to connect to Zotero.")
             success = False
         else:
-            self.debug_print("✅ Connected to local Zotero library successfully!")
+            self.debug_print("✅ Connected to Zotero library successfully!")
 
         # Test Qdrant connection
         if not self.rag.test_connection():
@@ -204,11 +211,64 @@ class ResearchAssistant:
             "🟢" if llm_ok else "🔴"
         ]
 
-    def process_query(self, query: str) -> Tuple[str, str]:
+    def get_latest_metrics_markdown(self) -> str:
+        """Return Markdown with LLM-as-a-Judge metrics for the latest interaction."""
+        try:
+            interaction = (
+                self.db_session.query(Interaction)
+                .order_by(Interaction.id.desc())
+                .first()
+            )
+            if not interaction:
+                return "### LLM-as-a-Judge\nNo metric data available. Ask a question to get an answer evaluation."
+
+            def fmt(value):
+                return "—" if value is None else (f"{value:.3f}" if isinstance(value, (int, float)) else str(value))
+
+            lines = [
+                "### LLM-as-a-Judge",
+                f"**Summary**: {fmt(interaction.summary)}\n",
+                f"**Verdict**: {fmt(interaction.verdict)}",
+                "",
+                "**Metrics**:",
+                f"- Query understanding: {fmt(interaction.query_understanding_score)}",
+                f"- Retrieval quality: {fmt(interaction.retrieval_quality)}",
+                f"- Generation quality: {fmt(interaction.generation_quality)}",
+                f"- Error detection: {fmt(interaction.error_detection_score)}",
+                f"- Citation integrity: {fmt(interaction.citation_integrity)}",
+                f"- Hallucination index: {fmt(interaction.hallucination_index)}",
+            ]
+            return "\n".join(lines)
+        except Exception as e:
+            self.debug_print(f"ERROR: Failed to render metrics: {str(e)}")
+            return "### LLM-as-a-Judge\nError rendering metrics."
+
+    def save_user_feedback(self, rating: int) -> str:
+        """Save user feedback (like/dislike) to the last interaction record."""
+        try:
+            # Get the last interaction from the database
+            last_interaction = self.db_session.query(Interaction).order_by(Interaction.id.desc()).first()
+            
+            if last_interaction:
+                # Update the user_rating field
+                last_interaction.user_rating = rating
+                self.db_session.commit()
+                
+                rating_text = "👍 Like" if rating == 1 else "👎 Dislike"
+                return f"✅ Thank you for your feedback! Your review '{rating_text}' has been saved."
+            else:
+                return "❌ No records found to rate."
+                
+        except Exception as e:
+            self.debug_print(f"ERROR: Failed to save user feedback: {str(e)}")
+            return f"❌ Error saving feedback: {str(e)}"
+
+    def process_query(self, message: str, history: Optional[List] = None) -> str:
         """Process a research query and return analysis results."""
         try:
-            self.debug_print(f"INFO: Rewriting query: {query}")
-            query = self.llm.rewrite_query(query)
+            usage.reset()
+            self.debug_print(f"INFO: Rewriting query: {message}")
+            query = self.llm.rewrite_query(message)
             self.debug_print(f"INFO: Processed query: {query}")
             context = self.rag.search_documents(query)
             context = sorted(context, key=lambda x: x['year'])
@@ -218,23 +278,66 @@ class ResearchAssistant:
             with open(self.log_file, 'a', encoding='utf-8') as log_file:
                 log_file.write(f"\n\n\nQuery: {query}\nResponse: {analysis}")
 
+            usage_summary = usage.summarize()
+
+            # Store interaction and usage in database 
+            interaction = Interaction(
+                query=message,
+                processed_query=query,
+                response=analysis,
+                used_documents=[doc['doi'] for doc in context],
+                llm_model = self.llm.model_name,
+                llm_tokens_used = usage_summary['tokens_in'] + usage_summary['tokens_out'],
+                llm_cost = usage_summary['cost_estimate'],
+                llm_response_time = usage_summary['duration']
+            )
+
             if self.llm_review:
+                usage.reset()
                 messages = self.llm_review.create_messages(query=query, context=context, response=analysis)
                 review_analysis = self.llm_review.ask_llm(messages)
                 review_json = extract_json_from_response(review_analysis)
                 self.debug_print(f"INFO: Review analysis: {json.dumps(review_json, indent=4)}")
 
+                usage_summary = usage.summarize()
+
+                interaction.review_llm_model = self.llm_review.model_name
+                interaction.review_llm_tokens_used = usage_summary['tokens_in'] + usage_summary['tokens_out']
+                interaction.review_llm_cost = usage_summary['cost_estimate']
+                interaction.review_llm_response_time = usage_summary['duration']
+
                 with open(self.log_file, 'a', encoding='utf-8') as log_file:
                     log_file.write(f"\n\nReview analysis: {json.dumps(review_json, indent=4)}")
+                
+                # Store review metrics
+                if isinstance(review_json, dict):
+                    interaction.summary = review_json.get('summary', None)
+                    interaction.verdict = review_json.get('verdict', None)
+                    if isinstance(review_json.get('metrics'), dict):
+                        metrics_json = review_json['metrics']
+                    else:
+                        metrics_json = review_json
+                    interaction.query_understanding_score = metrics_json.get('query_understanding_score', None)
+                    interaction.retrieval_quality = metrics_json.get('retrieval_quality', None)
+                    interaction.generation_quality = metrics_json.get('generation_quality', None)
+                    interaction.error_detection_score = metrics_json.get('error_detection_score', None)
+                    interaction.citation_integrity = metrics_json.get('citation_integrity', None)
+                    interaction.hallucination_index = metrics_json.get('hallucination_index', None)
+                    if isinstance(review_json.get('strengths'), list):
+                        interaction.strengths = review_json['strengths']
+                    if isinstance(review_json.get('weaknesses'), list):
+                        interaction.weaknesses = review_json['weaknesses']
 
-                return analysis, self.get_debug_output(), review_json, review_analysis
+            # Save to database
+            self.db_session.add(interaction)
+            self.db_session.commit()
 
             self.debug_print("SUCCESS: Query processed successfully")
-            return analysis, self.get_debug_output(), {}, ""
+            return analysis
         except Exception as e:
             error_msg = f"Error during analysis: {str(e)}"
             self.debug_print(f"ERROR: {error_msg}")
-            return error_msg, self.get_debug_output(), {}, ""
+            return error_msg
 
     def create_interface(self) -> gr.Blocks:
         """Create and configure the Gradio interface."""
@@ -264,69 +367,66 @@ class ResearchAssistant:
             
             gr.Markdown("---")
             
-            # Query interface
             with gr.Row():
-                with gr.Column(scale=8):
-                    query_input = gr.Textbox(
-                        lines=3,
-                        placeholder="Enter your research question...",
-                        label="Research Question"
-                    )
-                with gr.Column(scale=1):
-                    submit_btn = gr.Button("Ask", variant="primary")
-            
-            analysis_output = gr.Textbox(
-                lines=10,
-                label="LLM Analysis"
-            )
-            
-            debug_output = gr.Textbox(
-                lines=5,
-                label="Debug Output",
-                value=self.get_debug_output(),
-                interactive=False,
-                visible=False
-            )
-            
-            # Examples
-            gr.Examples(
-                examples=[
-                    ["What are the main themes in my library about machine learning?"],
-                    ["Summarize the recent papers about natural language processing."],
-                    ["What are the key findings about deep learning architectures?"]
-                ],
-                inputs=query_input
-            )
-            
-            # Set up event handlers
-            review_json = gr.JSON(visible=False)
-            review_analysis = gr.Textbox(visible=False)
-            
-            submit_btn.click(
-                fn=self.process_query,
-                inputs=query_input,
-                outputs=[analysis_output, debug_output, review_json, review_analysis]
-            )
+                left_col = gr.Column(scale=3)
+                right_col = gr.Column(scale=1)
 
-            # Add Ctrl+Enter shortcut
-            query_input.submit(
-                fn=self.process_query,
-                inputs=query_input,
-                outputs=[analysis_output, debug_output, review_json, review_analysis],
-                api_name=False  # Prevent API endpoint creation
-            )#.then(
-            #     None,  # No additional function to call
-            #     _js="""() => {
-            #         // Focus back on the input after submission
-            #         document.querySelector('textarea').focus();
-            #     }"""
-            # )
+                # Right: Metrics panel (empty at startup)
+                with right_col:
+                    metrics_panel = gr.Markdown("")
+
+                # Define wrapper that returns answer + metrics
+                def process_query_and_metrics(message, history=None):
+                    answer = self.process_query(message, history)
+                    return answer, self.get_latest_metrics_markdown()
+
+                # Left: Chat interface
+                with left_col:
+                    chat = gr.ChatInterface(
+                        fn=process_query_and_metrics,
+                        examples=[
+                            "What are the main themes in my library about machine learning?",
+                            "Summarize the recent papers about natural language processing.",
+                            "What are the key findings about deep learning architectures?"
+                        ],
+                        title="Research Assistant Chat",
+                        description="Ask questions about your Zotero library and get AI-powered insights.",
+                        analytics_enabled=False,
+                        autofocus=True,
+                        type="messages",
+                        additional_outputs=[metrics_panel]
+                    )
+                    # Feedback buttons row
+                    with gr.Row():
+                        gr.Markdown("**Rate the quality of the answer:**")
+                    with gr.Row():
+                        like_btn = gr.Button("👍 Like", variant="primary", size="sm")
+                        dislike_btn = gr.Button("👎 Dislike", variant="secondary", size="sm")
+                        feedback_status = gr.Markdown("", visible=False)
+
+            # Feedback button handlers
+            def handle_like():
+                result = self.save_user_feedback(1)
+                return gr.Markdown(result, visible=False)
+            
+            def handle_dislike():
+                result = self.save_user_feedback(-1)
+                return gr.Markdown(result, visible=False)
+            
+            like_btn.click(
+                fn=handle_like,
+                outputs=[feedback_status]
+            )
+            
+            dislike_btn.click(
+                fn=handle_dislike,
+                outputs=[feedback_status]
+            )
             
             # Update status LEDs every 30 seconds
             interface.load(
                 fn=self.update_status_leds,
-                outputs=[zotero_led, qdrant_led, llm_led],
-                # every=30  # Update every 30 seconds
+                outputs=[zotero_led, qdrant_led, llm_led]
             )
             
             # Initial status update

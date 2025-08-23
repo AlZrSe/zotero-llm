@@ -97,6 +97,7 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
 python-multipart==0.0.18
 pytz==2025.2
+SQLAlchemy
 PyYAML==6.0.2
 pyzotero==1.6.11
 qdrant-client==1.15.1

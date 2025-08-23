@@ -1,9 +1,14 @@
+import litellm
 from litellm import completion
+from litellm import completion_cost
+from litellm.integrations.custom_logger import CustomLogger
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from time import sleep
 import json
 import re
+import pandas as pd
+from datetime import datetime, timezone
 
 def extract_json_from_response(response_text: str) -> dict:
     """
@@ -71,6 +76,50 @@ class Paper:
     year: str
     authors: List[Dict] = None
     keywords: List[str] = None
+
+class UsageTracker(CustomLogger):
+    def __init__(self):
+        self.data = []
+        super().__init__()
+
+    def reset(self):
+        self.data = []
+
+    def log_success_event(self, kwargs, response_obj, start_time, end_time):
+        usage = response_obj.usage
+
+        try:
+            cost = completion_cost(completion_response=response_obj)
+        except Exception as e:
+            cost = 0
+
+        self.data.append(
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "model": response_obj.model,
+                "tokens_in": usage.prompt_tokens,
+                "tokens_out": usage.completion_tokens,
+                "cost_estimate": cost,
+                "duration": (end_time - start_time).total_seconds(),
+            }
+        )
+
+    def to_df(self) -> pd.DataFrame:
+        if self.data:
+            out = pd.DataFrame(self.data)
+        else:
+            out = pd.DataFrame()
+
+        return out
+
+    def summarize(self) -> Dict:
+        if self.data:
+            df = self.to_df()
+            grp = df.groupby("model")
+            out = grp.agg({"tokens_in": "sum", "tokens_out": "sum", "cost_estimate": "sum", "duration": "mean"})
+            return out.to_dict(orient="records")[0]
+        else:
+            return {}
 
 class LLMClient:
     """Class to handle interactions with Language Learning Models."""
@@ -170,3 +219,6 @@ class LLMClient:
     def update_system_prompt(self, new_prompt: str) -> None:
         """Update the system prompt used for LLM interactions."""
         self._system_prompt = new_prompt
+
+usage = UsageTracker()
+litellm.callbacks = [usage]

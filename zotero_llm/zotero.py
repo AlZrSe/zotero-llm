@@ -55,28 +55,34 @@ class ZoteroClient:
                 'authors': item['data'].get('creators', []),
                 'year': item['data'].get('date', ''),
                 'journal': item['data'].get('publicationTitle', ''),
-                'doi': item['data'].get('DOI', ''),
+                'doi': item['data'].get('DOI', item['data'].get('ISBN', '')),
                 'keywords': [tag['tag'] for tag in item['data'].get('tags', [])],
             }
 
         try:
-            # Get main library items with pagination
-            offset = 0
-            while True:
-                items = client.items(limit=batch_size, start=offset)
-                if not items:
-                    break
-                
-                # Parse and filter items
+            if not self.user_id:
+                items = client.items(limit=None)
                 batch_docs = [parse_item(item) for item in items if item['data']['itemType'] != 'attachment']
                 if batch_docs:
                     yield batch_docs
-                
-                # If we got fewer items than batch_size, we've reached the end
-                if len(items) < batch_size:
-                    break
-                
-                offset += batch_size
+            else:
+            # Get main library items with pagination
+                offset = 0
+                while True:
+                    items = client.items(limit=batch_size, start=offset)
+                    if not items:
+                        break
+                    
+                    # Parse and filter items
+                    batch_docs = [parse_item(item) for item in items if item['data']['itemType'] != 'attachment']
+                    if batch_docs:
+                        yield batch_docs
+                    
+                    # If we got fewer items than batch_size, we've reached the end
+                    if len(items) < batch_size:
+                        break
+                    
+                    offset += len(batch_docs)
                     
         except Exception as e:
             print(f"Error in fetch_items_paginated: {e}")
@@ -118,8 +124,8 @@ class ZoteroClient:
                     print(f"Error fetching group {group['id']}: {e}")
             
             # Drop duplicates based on doi
-            unique_docs = {doc['doi']: doc for doc in all_docs if doc['doi']}
-            
+            unique_docs = {doc['doi']: doc for doc in all_docs if doc.get('doi', None)}
+
             return list(unique_docs.values())
             
         except Exception as e:

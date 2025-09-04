@@ -167,7 +167,7 @@ class ResearchAssistant:
 
         if need_upload:
             upload_documents = [doc for doc in documents if doc['zotero_key'] in need_upload]
-            self.rag.upload_documents(upload_documents, collection_name=collection_name, start_index=max(qdrant_ids) + 1)
+            self.rag.upload_documents(upload_documents, collection_name=collection_name, start_index=max([-1] + qdrant_ids) + 1)
 
         if need_delete:
             key_ids = [item[1] for item in zip(qdrant_keys_list, qdrant_ids) if item[0] in need_delete]

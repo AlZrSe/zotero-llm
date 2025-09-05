@@ -225,6 +225,21 @@ class ResearchAssistant:
             def fmt(value):
                 return "—" if value is None else (f"{value:.3f}" if isinstance(value, (int, float)) else str(value))
 
+            # Check if review metrics are available
+            has_review_metrics = any([
+                interaction.summary is not None,
+                interaction.verdict is not None,
+                interaction.query_understanding_score is not None,
+                interaction.retrieval_quality is not None,
+                interaction.generation_quality is not None,
+                interaction.error_detection_score is not None,
+                interaction.citation_integrity is not None,
+                interaction.hallucination_index is not None
+            ])
+            
+            if not has_review_metrics:
+                return "### LLM-as-a-Judge\nReview LLM failed after all retries. No evaluation metrics available."
+
             lines = [
                 "### LLM-as-a-Judge",
                 f"**Summary**: {fmt(interaction.summary)}\n",
@@ -293,40 +308,48 @@ class ResearchAssistant:
             )
 
             if self.llm_review:
-                usage.reset()
-                messages = self.llm_review.create_messages(query=query, context=context, response=analysis)
-                review_analysis = self.llm_review.ask_llm(messages)
-                review_json = extract_json_from_response(review_analysis)
-                self.debug_print(f"INFO: Review analysis: {json.dumps(review_json, indent=4)}")
+                try:
+                    usage.reset()
+                    messages = self.llm_review.create_messages(query=query, context=context, response=analysis)
+                    review_analysis = self.llm_review.ask_llm(messages)
+                    review_json = extract_json_from_response(review_analysis)
+                    self.debug_print(f"INFO: Review analysis: {json.dumps(review_json, indent=4)}")
 
-                usage_summary = usage.summarize()
+                    usage_summary = usage.summarize()
 
-                interaction.review_llm_model = self.llm_review.model_name
-                interaction.review_llm_tokens_used = usage_summary['tokens_in'] + usage_summary['tokens_out']
-                interaction.review_llm_cost = usage_summary['cost_estimate']
-                interaction.review_llm_response_time = usage_summary['duration']
+                    interaction.review_llm_model = self.llm_review.model_name
+                    interaction.review_llm_tokens_used = usage_summary['tokens_in'] + usage_summary['tokens_out']
+                    interaction.review_llm_cost = usage_summary['cost_estimate']
+                    interaction.review_llm_response_time = usage_summary['duration']
 
-                with open(self.log_file, 'a', encoding='utf-8') as log_file:
-                    log_file.write(f"\n\nReview analysis: {json.dumps(review_json, indent=4)}")
-                
-                # Store review metrics
-                if isinstance(review_json, dict):
-                    interaction.summary = review_json.get('summary', None)
-                    interaction.verdict = review_json.get('verdict', None)
-                    if isinstance(review_json.get('metrics'), dict):
-                        metrics_json = review_json['metrics']
-                    else:
-                        metrics_json = review_json
-                    interaction.query_understanding_score = metrics_json.get('query_understanding_score', None)
-                    interaction.retrieval_quality = metrics_json.get('retrieval_quality', None)
-                    interaction.generation_quality = metrics_json.get('generation_quality', None)
-                    interaction.error_detection_score = metrics_json.get('error_detection_score', None)
-                    interaction.citation_integrity = metrics_json.get('citation_integrity', None)
-                    interaction.hallucination_index = metrics_json.get('hallucination_index', None)
-                    if isinstance(review_json.get('strengths'), list):
-                        interaction.strengths = review_json['strengths']
-                    if isinstance(review_json.get('weaknesses'), list):
-                        interaction.weaknesses = review_json['weaknesses']
+                    with open(self.log_file, 'a', encoding='utf-8') as log_file:
+                        log_file.write(f"\n\nReview analysis: {json.dumps(review_json, indent=4)}")
+                    
+                    # Store review metrics
+                    if isinstance(review_json, dict):
+                        interaction.summary = review_json.get('summary', None)
+                        interaction.verdict = review_json.get('verdict', None)
+                        if isinstance(review_json.get('metrics'), dict):
+                            metrics_json = review_json['metrics']
+                        else:
+                            metrics_json = review_json
+                        interaction.query_understanding_score = metrics_json.get('query_understanding_score', None)
+                        interaction.retrieval_quality = metrics_json.get('retrieval_quality', None)
+                        interaction.generation_quality = metrics_json.get('generation_quality', None)
+                        interaction.error_detection_score = metrics_json.get('error_detection_score', None)
+                        interaction.citation_integrity = metrics_json.get('citation_integrity', None)
+                        interaction.hallucination_index = metrics_json.get('hallucination_index', None)
+                        if isinstance(review_json.get('strengths'), list):
+                            interaction.strengths = review_json['strengths']
+                        if isinstance(review_json.get('weaknesses'), list):
+                            interaction.weaknesses = review_json['weaknesses']
+                            
+                except Exception as e:
+                    self.debug_print(f"WARNING: Review LLM failed after all retries: {str(e)}")
+                    self.debug_print("INFO: Skipping review analysis and continuing with main response")
+                    # Log the failure but continue processing
+                    with open(self.log_file, 'a', encoding='utf-8') as log_file:
+                        log_file.write(f"\n\nReview LLM failed: {str(e)}")
 
             # Save to database
             self.db_session.add(interaction)

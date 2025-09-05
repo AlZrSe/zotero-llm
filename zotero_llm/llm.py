@@ -137,6 +137,7 @@ class LLMClient:
         self.retries = retries
         self.input_params = input_params
         self.rewrite_prompt = rewrite_prompt
+        self.last_query_datetime = datetime.min
 
     def format_papers_context(self, papers: List[Dict]) -> str:
         """Format papers into a string context for the LLM."""
@@ -163,21 +164,27 @@ class LLMClient:
     def ask_llm(self, messages: List[Dict[str, str]]) -> str:
         """Ask the LLM a question and return its response."""
 
+        time_from_last_query = (datetime.now() - self.last_query_datetime).total_seconds()
+        if time_from_last_query < self.timeout:
+            sleep(self.timeout - time_from_last_query + 1)
+
         for _ in range(self.retries):
             try:
                 if self.base_url:
-                    return completion(
+                    response = completion(
                         model=self.model_name,
                         messages=messages,
                         base_url=self.base_url,
                         **self.input_params
                     ).choices[0].message.content
                 else:
-                    return completion(
+                    response = completion(
                         model=self.model_name,
                         messages=messages,
                         **self.input_params
                     ).choices[0].message.content
+                self.last_query_datetime = datetime.now()
+                return response
             except Exception as e:
                 print(f"Error during LLM completion: {e}")
                 sleep(self.timeout)  # Wait before retrying

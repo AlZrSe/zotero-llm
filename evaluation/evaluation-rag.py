@@ -117,30 +117,30 @@ class RAGEvaluator:
         model_results = []
 
         # Upload Zotero database and measure upsert time
-        collection_name = f"eval_{self.model_config['embedding_model'].split('/')[-1]}"
+        collection_name = f"eval_{self.model_config['model_name'].split('/')[-1]}"
         
-        # Create ResearchAssistant instance with the current model
+        # Create ResearchAssistant instance with the current model using new structure
         assistant = ResearchAssistant(
-            embedding_model={
-                "embedding_model": self.model_config["embedding_model"],
-                "embedding_model_size": self.model_config["embedding_model_size"]
-            },
+            embedding_model=self.model_config,
             collection_name=collection_name
         )
+        
+        # Get embedding size dynamically from the embedding client
+        embedding_size = assistant.rag.embedding_client.embedding_size
 
         # Check if collection already exists and has size > 0
-        existing_collections = assistant.rag.get_collections()
+        existing_collections = assistant.rag.get_collections(max_retries=3)
         selected_collections = {col['name']: col['size'] for col in existing_collections}
-        if collection_name in selected_collections and selected_collections[collection_name].count > 0:
+        if collection_name in selected_collections and selected_collections[collection_name] > 0:
             print(f"Collection {collection_name} already exists and has items.")
             mean_upsert_time = 0
         else:
             print(f"Collection {collection_name} does not exist or is empty. Proceeding with upload.")
             start_time = time.time()
-            assistant.upload_documents(collection_name)
+            assistant.upload_documents(collection_name)  # ResearchAssistant method (has built-in retry via RAG engine)
             total_time = time.time() - start_time
             
-            num_items = assistant.zotero.client.count_items()
+            num_items = assistant.zotero.get_library_info().get('total_items', 0) if assistant.zotero.get_library_info() else 0
             mean_upsert_time = total_time / num_items if num_items else 0
             print(f"Average upsert time: {mean_upsert_time:.2f} seconds")
 
@@ -149,12 +149,12 @@ class RAGEvaluator:
             context_dois = query_data.get("context_dois", [])
             
             start_time = time.time()
-            context = assistant.rag.search_documents(query, limit=max(self.k_values))
+            context = assistant.rag.search_documents(query, limit=max(self.k_values), max_retries=3)  # Use retry mechanism
             end_time = time.time()
 
             result = EvaluationResult(
-                model_name=self.model_config["embedding_model"],
-                embedding_dim=self.model_config["embedding_model_size"],
+                model_name=self.model_config["model_name"],
+                embedding_dim=embedding_size,
                 query=query,
                 response_time=end_time - start_time,
                 mean_upsert_time=mean_upsert_time,
@@ -195,12 +195,12 @@ class RAGEvaluator:
 
     def run_evaluation(self) -> List[EvaluationResult]:
         """Run evaluation for the model with all test queries."""
-        print(f"\nEvaluating model: {self.model_config['embedding_model']}")
+        print(f"\nEvaluating model: {self.model_config['model_name']}")
         try:
             self.results = self.evaluate_model()
-            print(f"✓ Completed evaluation for {self.model_config['embedding_model']}")
+            print(f"✓ Completed evaluation for {self.model_config['model_name']}")
         except Exception as e:
-            print(f"✗ Error evaluating {self.model_config['embedding_model']}: {str(e)}")
+            print(f"✗ Error evaluating {self.model_config['model_name']}: {str(e)}")
             raise
         return self.results
 
@@ -316,11 +316,11 @@ def main():
             all_results.extend(model_results)
             
             # Save incremental results
-            output_path = f"evaluation/rag_evaluation_results_{model_config['embedding_model'].split('/')[-1]}.csv"
+            output_path = f"evaluation/rag_evaluation_results_{model_config['model_name'].split('/')[-1]}.csv"
             evaluator.save_results(output_path)
             
         except Exception as e:
-            print(f"Error evaluating model {model_config['embedding_model']}: {str(e)}")
+            print(f"Error evaluating model {model_config['model_name']}: {str(e)}")
             continue
     
     print("RAG evaluation completed successfully.")

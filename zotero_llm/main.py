@@ -33,11 +33,27 @@ class ResearchAssistant:
             user_id=os.getenv("ZOTERO_USER_ID", None),
             api_key=os.getenv("ZOTERO_API_KEY", None)
         )
-        embedding_model = embedding_model or self.llm_config.get('embedding_model', {})
+        
+        # Handle both old and new embedding configuration
+        embedding_config = embedding_model or self.llm_config.get('embedding_model', {})
         self.collection_name = collection_name or ResearchAssistant.DEFAULT_COLLECTION
-
-        self.rag = RAGEngine(**embedding_model, collection_name=self.collection_name,
-                             server_url=f'http://{os.getenv('QDRANT_HOST', 'localhost')}:{os.getenv('QDRANT_PORT', '6333')}')
+        
+        # Check if this is new format (has provider_type) or old format
+        if 'provider_type' in embedding_config:
+            # New format: pass the entire config
+            self.rag = RAGEngine(
+                collection_name=self.collection_name,
+                server_url=f'http://{os.getenv('QDRANT_HOST', 'localhost')}:{os.getenv('QDRANT_PORT', '6333')}',
+                embedding_config=embedding_config
+            )
+        else:
+            # Old format: backward compatibility
+            self.rag = RAGEngine(
+                collection_name=self.collection_name,
+                server_url=f'http://{os.getenv('QDRANT_HOST', 'localhost')}:{os.getenv('QDRANT_PORT', '6333')}',
+                embedding_model=embedding_config.get('embedding_model', 'jinaai/jina-embeddings-v2-base-en'),
+                embedding_model_size=embedding_config.get('embedding_model_size', 768)
+            )
 
         answers_llm = answers_llm or self.llm_config.get('answers_llm', {})
         self.llm = LLMClient(**answers_llm)

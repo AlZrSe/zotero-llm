@@ -44,8 +44,27 @@ Each block have parameters:
 - `retries`: Number of retry attempts if the request fails
 
 - `embedding_model` - parameters for the vector embeddings
-    - `embedding_model`: The model to use for generating embeddings (e.g., "jinaai/jina-embeddings-v2-base-en")
-    - `embedding_model_size`: Dimension size of the embedding vectors (e.g., 768)
+    - **FastEmbed (default)**: Use existing format for backward compatibility
+        - `embedding_model`: The model to use for generating embeddings (e.g., "jinaai/jina-embeddings-v2-base-en")
+        - `embedding_model_size`: Dimension size of the embedding vectors (e.g., 768)
+    - **External providers**: Use new format for models not supported by FastEmbed
+        - `provider_type`: Set to "litellm" for external providers
+        - `model_name`: The embedding model identifier (e.g., "text-embedding-3-large")
+        - `base_url`: API endpoint URL (optional)
+        - `api_key`: API key for authentication (optional, can use environment variables)
+        - `timeout`: Request timeout in seconds (optional, default: 30)
+        - `input_params`: Additional parameters for the embedding API (optional)
+    - **HuggingFace local models**: Use local transformers models
+        - `provider_type`: Set to "huggingface" for local HuggingFace models
+        - `model_name`: The HuggingFace model identifier (e.g., "sentence-transformers/all-MiniLM-L6-v2")
+        - `device`: Device to run on ("cpu", "cuda", "auto", optional)
+        - `max_length`: Maximum sequence length (optional, default: 512)
+        - `pooling_strategy`: How to pool embeddings ("mean", "cls", "max", optional, default: "mean")
+        - `trust_remote_code`: Whether to trust remote code (optional, default: false)
+        - `model_kwargs`: Additional model arguments (optional)
+
+    📖 **For detailed configuration examples and supported providers, see [EXTERNAL_EMBEDDINGS.md](EXTERNAL_EMBEDDINGS.md)**
+    📋 **For comprehensive model examples and evaluation configurations, see [`evaluation/rag_list.json`](evaluation/rag_list.json)**
 
 6. Install Grafana for visualization of metrics:
 - Run Grafana docker image by command:

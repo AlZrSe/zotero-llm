@@ -1,66 +1,57 @@
 [
   {
-    "embedding_model": "BAAI/bge-m3",
-    "embedding_model_size": 1024
+    "provider_type": "huggingface",
+    "model_name": "Qwen/Qwen3-Embedding-0.6B",
+    "device": "auto"
   },
   {
-    "embedding_model": "BAAI/bge-multilingual-gemma2",
-    "embedding_model_size": 1024
+    "provider_type": "huggingface",
+    "model_name": "allenai/scibert_scivocab_uncased",
+    "device": "auto",
+    "pooling_strategy": "mean",
+    "trust_remote_code": false
   },
   {
-    "embedding_model": "answerdotai/answerai-colbert-small-v1",
-    "embedding_model_size": 96
+    "provider_type": "huggingface",
+    "model_name": "emilyalsentzer/Bio_ClinicalBERT",
+    "device": "auto",
+    "pooling_strategy": "mean",
+    "trust_remote_code": false
   },
   {
-    "embedding_model": "google-bert/bert-base-multilingual-cased",
-    "embedding_model_size": 768
+    "provider_type": "huggingface",
+    "model_name": "microsoft/codebert-base",
+    "device": "auto",
+    "pooling_strategy": "mean",
+    "trust_remote_code": false
   },
   {
-    "embedding_model": "intfloat/multilingual-e5-base",
-    "embedding_model_size": 768
+    "provider_type": "huggingface",
+    "model_name": "nlpie/compact-biobert",
+    "device": "auto"
   },
   {
-    "embedding_model": "intfloat/multilingual-e5-large",
-    "embedding_model_size": 1024
+    "provider_type": "huggingface",
+    "model_name": "nlpie/tiny-biobert"
   },
   {
-    "embedding_model": "intfloat/multilingual-e5-small",
-    "embedding_model_size": 384
+    "provider_type": "huggingface",
+    "model_name": "seyonec/ChemBERTa-zinc-base-v1"
   },
   {
-    "embedding_model": "jinaai/jina-embeddings-v2-base-code",
-    "embedding_model_size": 768
+    "provider_type": "huggingface",
+    "model_name": "seyonec/ChemBERTa-zinc250k-v1"
   },
   {
-    "embedding_model": "microsoft/Multilingual-MiniLM-L12-H384",
-    "embedding_model_size": 384
+    "provider_type": "huggingface",
+    "model_name": "DeepChem/ChemBERTa-77M-MTR"
   },
   {
-    "embedding_model": "sentence-transformers/LaBSE",
-    "embedding_model_size": 768
+    "provider_type": "huggingface",
+    "model_name": "sentence-transformers/allenai-specter"
   },
   {
-    "embedding_model": "sentence-transformers/distiluse-base-multilingual-cased",
-    "embedding_model_size": 512
-  },
-  {
-    "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-    "embedding_model_size": 384
-  },
-  {
-    "embedding_model": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
-    "embedding_model_size": 768
-  },
-  {
-    "embedding_model": "sentence-transformers/paraphrase-xlm-r-multilingual-v1",
-    "embedding_model_size": 768
-  },
-  {
-    "embedding_model": "sentence-transformers/stsb-xlm-r-multilingual",
-    "embedding_model_size": 768
-  },
-  {
-    "embedding_model": "jinaai/jina-embeddings-v3",
-    "embedding_model_size": 1024
+    "provider_type": "huggingface",
+    "model_name": "callaghanmt/scibert_embed"
   }
 ]

@@ -119,7 +119,13 @@ class UsageTracker(CustomLogger):
             out = grp.agg({"tokens_in": "sum", "tokens_out": "sum", "cost_estimate": "sum", "duration": "mean"})
             return out.to_dict(orient="records")[0]
         else:
-            return {}
+            # Return default structure when no data is available
+            return {
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "cost_estimate": 0.0,
+                "duration": 0.0
+            }
 
 class LLMClient:
     """Class to handle interactions with Language Learning Models."""

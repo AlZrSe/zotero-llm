@@ -17,6 +17,14 @@ from zotero_llm.rag import RAGEngine
 from zotero_llm.llm import LLMClient, extract_json_from_response, usage
 from zotero_llm.models import init_db, get_session, Interaction
 
+# Import agentic RAG functionality
+try:
+    from zotero_llm.agentic_rag import AgenticRAGEngine
+    AGENTIC_RAG_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Agentic RAG not available: {e}")
+    AGENTIC_RAG_AVAILABLE = False
+
 class ResearchAssistant:
     DEFAULT_COLLECTION = "zotero_llm_abstracts"
 
@@ -45,6 +53,24 @@ class ResearchAssistant:
             self.llm_review = LLMClient(**self.llm_config['review_llm'])
         else:
             self.llm_review = None
+
+        # Initialize agentic RAG if available and enabled
+        self.agentic_rag = None
+        self.agentic_rag_enabled = False
+        if AGENTIC_RAG_AVAILABLE and self.llm_config.get('agentic_rag', {}).get('enabled', False):
+            try:
+                agent_llm_config = self.llm_config.get('agentic_rag', {}).get('agent_llm', {})
+                agent_llm = LLMClient(**agent_llm_config) if agent_llm_config else self.llm
+                self.agentic_rag = AgenticRAGEngine(
+                    rag_engine=self.rag,
+                    llm_client=agent_llm,
+                    agent_llm_config=self.llm_config.get('agentic_rag', {})
+                )
+                self.agentic_rag_enabled = True
+                self.debug_print("✅ Agentic RAG initialized successfully!")
+            except Exception as e:
+                self.debug_print(f"⚠️ Failed to initialize agentic RAG: {e}")
+                self.agentic_rag_enabled = False
 
         # Initialize database
         db_path = os.path.join(project_root, "grafana/metrics.db")
@@ -278,6 +304,129 @@ class ResearchAssistant:
             self.debug_print(f"ERROR: Failed to save user feedback: {str(e)}")
             return f"❌ Error saving feedback: {str(e)}"
 
+    def process_agentic_query(self, message: str, history: Optional[List] = None) -> str:
+        """Process a research query using agentic RAG and return analysis results."""
+        if not self.agentic_rag_enabled or not self.agentic_rag:
+            self.debug_print("WARNING: Agentic RAG not available, falling back to standard RAG")
+            return self.process_query(message, history)
+        
+        try:
+            usage.reset()
+            self.debug_print(f"INFO: Processing agentic query: {message}")
+            
+            # Use agentic RAG for enhanced search
+            agentic_results = self.agentic_rag.agentic_search(message)
+            
+            # Log the estimated limit for debugging
+            estimated_limit = agentic_results.get('estimated_limit', 'unknown')
+            limit_source = agentic_results.get('limit_source', 'unknown')
+            user_requested = agentic_results.get('user_requested_limit')
+            
+            if limit_source == 'user_request':
+                self.debug_print(f"INFO: Using user-requested limit: {estimated_limit} documents")
+            elif limit_source == 'manual_override':
+                self.debug_print(f"INFO: Using manually specified limit: {estimated_limit} documents")
+            else:
+                self.debug_print(f"INFO: Agentic RAG estimated optimal limit: {estimated_limit} documents")
+            
+            # Extract context from agentic results
+            if agentic_results.get('fallback_used', False):
+                self.debug_print("INFO: Agentic RAG used fallback, processing standard results")
+                context = agentic_results.get('standard_results', [])
+                query = self.llm.rewrite_query(message)  # Standard query rewriting
+            else:
+                self.debug_print("INFO: Agentic RAG completed successfully")
+                # Extract documents from agentic results
+                context = agentic_results.get('standard_results', [])
+                # For now, use standard query rewriting - could be enhanced with agent insights
+                query = self.llm.rewrite_query(message)
+            
+            context = sorted(context, key=lambda x: x.get('year', 0))
+            
+            # Generate enhanced prompt with agentic insights
+            enhanced_context = context
+            if not agentic_results.get('fallback_used', False):
+                # Add agentic insights to the analysis
+                agentic_info = f"\n\nAgentic Analysis Insights:\n{agentic_results.get('agentic_results', 'No additional insights available')}"
+                self.debug_print(f"INFO: Adding agentic insights to analysis")
+            
+            analysis = self.llm.ask_question(query, enhanced_context)
+            
+            # Log the interaction with agentic flag
+            with open(self.log_file, 'a', encoding='utf-8') as log_file:
+                log_file.write(f"\n\n\nAgentic Query: {query}\nAgentic Results: {json.dumps(agentic_results, indent=2)}\nResponse: {analysis}")
+
+            usage_summary = usage.summarize()
+
+            # Store interaction and usage in database with agentic flag
+            interaction = Interaction(
+                query=message,
+                processed_query=query,
+                response=analysis,
+                used_documents=[doc.get('doi', '') for doc in context if doc.get('doi')],
+                llm_model=f"{self.llm.model_name} (agentic)",
+                llm_tokens_used=usage_summary['tokens_in'] + usage_summary['tokens_out'],
+                llm_cost=usage_summary['cost_estimate'],
+                llm_response_time=usage_summary['duration']
+            )
+
+            # Continue with review LLM processing (same as standard)
+            if self.llm_review:
+                try:
+                    usage.reset()
+                    messages = self.llm_review.create_messages(query=query, context=enhanced_context, response=analysis)
+                    review_analysis = self.llm_review.ask_llm(messages)
+                    review_json = extract_json_from_response(review_analysis)
+                    self.debug_print(f"INFO: Review analysis: {json.dumps(review_json, indent=4)}")
+
+                    usage_summary = usage.summarize()
+
+                    interaction.review_llm_model = self.llm_review.model_name
+                    interaction.review_llm_tokens_used = usage_summary['tokens_in'] + usage_summary['tokens_out']
+                    interaction.review_llm_cost = usage_summary['cost_estimate']
+                    interaction.review_llm_response_time = usage_summary['duration']
+
+                    with open(self.log_file, 'a', encoding='utf-8') as log_file:
+                        log_file.write(f"\n\nReview analysis: {json.dumps(review_json, indent=4)}")
+                    
+                    # Store review metrics
+                    if isinstance(review_json, dict):
+                        interaction.summary = review_json.get('summary', None)
+                        interaction.verdict = review_json.get('verdict', None)
+                        if isinstance(review_json.get('metrics'), dict):
+                            metrics_json = review_json['metrics']
+                        else:
+                            metrics_json = review_json
+                        interaction.query_understanding_score = metrics_json.get('query_understanding_score', None)
+                        interaction.retrieval_quality = metrics_json.get('retrieval_quality', None)
+                        interaction.generation_quality = metrics_json.get('generation_quality', None)
+                        interaction.error_detection_score = metrics_json.get('error_detection_score', None)
+                        interaction.citation_integrity = metrics_json.get('citation_integrity', None)
+                        interaction.hallucination_index = metrics_json.get('hallucination_index', None)
+                        if isinstance(review_json.get('strengths'), list):
+                            interaction.strengths = review_json['strengths']
+                        if isinstance(review_json.get('weaknesses'), list):
+                            interaction.weaknesses = review_json['weaknesses']
+                            
+                except Exception as e:
+                    self.debug_print(f"WARNING: Review LLM failed after all retries: {str(e)}")
+                    self.debug_print("INFO: Skipping review analysis and continuing with main response")
+                    with open(self.log_file, 'a', encoding='utf-8') as log_file:
+                        log_file.write(f"\n\nReview LLM failed: {str(e)}")
+
+            # Save to database
+            self.db_session.add(interaction)
+            self.db_session.commit()
+
+            self.debug_print("SUCCESS: Agentic query processed successfully")
+            return analysis
+            
+        except Exception as e:
+            error_msg = f"Error during agentic analysis: {str(e)}"
+            self.debug_print(f"ERROR: {error_msg}")
+            self.debug_print("INFO: Falling back to standard RAG")
+            return self.process_query(message, history)
+
     def process_query(self, message: str, history: Optional[List] = None) -> str:
         """Process a research query and return analysis results."""
         try:
@@ -388,6 +537,26 @@ class ResearchAssistant:
                 gr.Markdown("Qdrant")
                 gr.Markdown("LLM")
             
+            # RAG Mode Selection
+            with gr.Row():
+                if self.agentic_rag_enabled:
+                    rag_mode_toggle = gr.Radio(
+                        choices=["Standard RAG", "Agentic RAG"],
+                        value="Standard RAG",
+                        label="RAG Mode",
+                        info="Choose between standard retrieval or agentic multi-agent search"
+                    )
+                    rag_status = gr.Markdown("ℹ️ **Standard RAG**: Using traditional hybrid search")
+                else:
+                    rag_mode_toggle = gr.Radio(
+                        choices=["Standard RAG"],
+                        value="Standard RAG",
+                        label="RAG Mode",
+                        info="Agentic RAG not available - check dependencies and configuration",
+                        interactive=False
+                    )
+                    rag_status = gr.Markdown("⚠️ **Agentic RAG unavailable**: Using standard RAG only")
+            
             gr.Markdown("---")
             
             with gr.Row():
@@ -398,15 +567,43 @@ class ResearchAssistant:
                 with right_col:
                     metrics_panel = gr.Markdown("")
 
-                # Define wrapper that returns answer + metrics
-                def process_query_and_metrics(message, history=None):
-                    answer = self.process_query(message, history)
+                # Define wrapper that returns answer + metrics based on selected mode
+                def process_query_and_metrics(message, history=None, rag_mode="Standard RAG"):
+                    if rag_mode == "Agentic RAG" and self.agentic_rag_enabled:
+                        answer = self.process_agentic_query(message, history)
+                    else:
+                        answer = self.process_query(message, history)
                     return answer, self.get_latest_metrics_markdown()
+                
+                # Define mode change handler
+                def on_rag_mode_change(mode):
+                    if mode == "Agentic RAG":
+                        return gr.Markdown("🤖 **Agentic RAG**: Using AI agents for enhanced multi-strategy search")
+                    else:
+                        return gr.Markdown("ℹ️ **Standard RAG**: Using traditional hybrid search")
+                
+                # Connect mode change handler
+                if self.agentic_rag_enabled:
+                    rag_mode_toggle.change(
+                        fn=on_rag_mode_change,
+                        inputs=[rag_mode_toggle],
+                        outputs=[rag_status]
+                    )
 
                 # Left: Chat interface
                 with left_col:
+                    # Create a wrapper function that captures the current RAG mode
+                    def chat_fn(message, history, rag_mode_val=None):
+                        # Get current RAG mode from the toggle
+                        current_mode = rag_mode_val if rag_mode_val is not None else "Standard RAG"
+                        return process_query_and_metrics(message, history, current_mode)
+                    
                     chat = gr.ChatInterface(
-                        fn=process_query_and_metrics,
+                        fn=lambda message, history: process_query_and_metrics(
+                            message, 
+                            history, 
+                            rag_mode_toggle.value if self.agentic_rag_enabled else "Standard RAG"
+                        ),
                         examples=[
                             "What are the main themes in my library about machine learning?",
                             "Summarize the recent papers about natural language processing.",

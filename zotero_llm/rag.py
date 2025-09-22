@@ -37,7 +37,7 @@ except ImportError:
     print("NLTK not available, using regex-based sentence splitting")
 
 # Limit constants for intelligent estimation
-MIN_LIMIT = 3   # Always get at least 3 documents
+MIN_LIMIT = 5   # Always get at least 3 documents
 MAX_LIMIT = 50  # Cap at 50 to avoid overwhelming results
 
 class RAGEngine:
@@ -197,9 +197,7 @@ class RAGEngine:
                 chunks.append({
                     'text': combined_text,
                     'chunk_type': 'full_document',
-                    'chunk_index': 0,
-                    'source_title': title,
-                    'source_abstract': abstract
+                    'chunk_index': 0
                 })
             return chunks
         
@@ -211,9 +209,7 @@ class RAGEngine:
             chunks.append({
                 'text': f'Title: {title}',
                 'chunk_type': 'title',
-                'chunk_index': chunk_index,
-                'source_title': title,
-                'source_abstract': abstract
+                'chunk_index': chunk_index
             })
             chunk_index += 1
         
@@ -227,9 +223,7 @@ class RAGEngine:
                     'chunk_type': 'abstract_sentence',
                     'chunk_index': chunk_index,
                     'sentence_index': i,
-                    'total_sentences': len(abstract_sentences),
-                    'source_title': title,
-                    'source_abstract': abstract
+                    'total_sentences': len(abstract_sentences)
                 })
                 chunk_index += 1
         
@@ -239,9 +233,7 @@ class RAGEngine:
             chunks.append({
                 'text': combined_text,
                 'chunk_type': 'combined_fallback',
-                'chunk_index': chunk_index,
-                'source_title': title,
-                'source_abstract': abstract
+                'chunk_index': chunk_index
             })
         
         return chunks
@@ -422,7 +414,7 @@ class RAGEngine:
             points = []
             point_id = start_index
             
-            for doc_idx, doc in enumerate(tqdm(documents, desc="Processing documents for upload")):
+            for doc_idx, doc in enumerate(tqdm(documents, desc="Chunking documents for upload")):
                 # Skip empty documents
                 if not (doc.get('title', '').strip() or doc.get('abstract', '').strip() or doc.get('keywords', [])):
                     continue
@@ -431,16 +423,14 @@ class RAGEngine:
                 chunks = self._create_document_chunks(doc)
                 
                 for chunk in chunks:
-                    # Create enhanced payload with chunk information
-                    chunk_payload = doc.copy()
-                    chunk_payload.update({
+                    # Create minimal payload with only the Zotero key
+                    chunk_payload = {
+                        'zotero_key': doc.get('zotero_key'),
                         'chunk_type': chunk['chunk_type'],
                         'chunk_index': chunk['chunk_index'],
-                        'source_title': chunk['source_title'],
-                        'source_abstract': chunk['source_abstract'],
                         'doc_index': doc_idx,
                         'chunk_text': chunk['text']
-                    })
+                    }
                     
                     # Add sentence-specific metadata if available
                     if 'sentence_index' in chunk:
@@ -450,7 +440,7 @@ class RAGEngine:
                     # Prepare keyword text for BM25
                     keywords_text = ", ".join(doc.get("keywords", []))
                     bm25_text = chunk['text']
-                    if keywords_text:
+                    if keywords_text: # and chunk_payload['chunk_type'] == 'combined_fallback':
                         bm25_text += f"\nKeywords: {keywords_text}"
                     
                     point = models.PointStruct(
@@ -532,7 +522,7 @@ class RAGEngine:
                 print(f"Using intelligent estimated limit: {final_limit} documents")
         
         # When using sentence splitting, search for more chunks to ensure good document coverage
-        search_limit = final_limit * 3 if self.use_sentence_splitting else final_limit
+        search_limit = final_limit * 5 if self.use_sentence_splitting else final_limit
         
         try:
             results = self.client.query_points(
@@ -564,29 +554,16 @@ class RAGEngine:
             # Process results
             if results.points:
                 eval_context = []
-                seen_dois = set()
+                seen_keys = set()
                 
                 for point in results.points:
-                    if 'doi' in point.payload:
+                    # Extract the Zotero key from payload
+                    zotero_key = point.payload.get('zotero_key', '')
+                    if zotero_key and zotero_key not in seen_keys:
+                        # Return the payload with the score
                         point.payload['score'] = point.score
-                        
-                        # Add chunk information for debugging/analysis
-                        if self.use_sentence_splitting:
-                            point.payload['chunk_info'] = {
-                                'chunk_type': point.payload.get('chunk_type', 'unknown'),
-                                'chunk_index': point.payload.get('chunk_index', 0),
-                                'matched_text': point.payload.get('chunk_text', '')
-                            }
-                            
-                            # Handle deduplication for sentence-split documents
-                            if deduplicate_documents:
-                                doi = point.payload.get('doi')
-                                if doi in seen_dois:
-                                    # Skip duplicate, but track which chunk matched best
-                                    continue
-                                seen_dois.add(doi)
-                        
                         eval_context.append(point.payload)
+                        seen_keys.add(zotero_key)
                         
                         # Stop when we have enough unique documents
                         if len(eval_context) >= final_limit:

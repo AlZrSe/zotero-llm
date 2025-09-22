@@ -35,6 +35,19 @@ class ZoteroClient:
             else:
                 raise ValueError("group_id is required when library_type is 'group'")
 
+    def parse_item(self, item: Dict) -> Dict:
+        """Parse a single Zotero item into a standardized dictionary."""
+        return {
+            'zotero_key': item['key'],
+            'title': item['data'].get('title', ''),
+            'abstract': item['data'].get('abstractNote', ''),
+            'authors': item['data'].get('creators', []),
+            'year': item['data'].get('date', ''),
+            'journal': item['data'].get('publicationTitle', ''),
+            'doi': item['data'].get('DOI', item['data'].get('ISBN', '')),
+            'keywords': [tag['tag'] for tag in item['data'].get('tags', [])],
+        }
+
     def fetch_items_paginated(self, client: zotero.Zotero, batch_size: int = 100) -> Iterator[List[Dict]]:
         """
         Fetch items from Zotero library with pagination.
@@ -46,23 +59,10 @@ class ZoteroClient:
         Yields:
             List of parsed items for each batch
         """
-        def parse_item(item: Dict) -> Dict:
-            """Parse a single Zotero item into a standardized dictionary."""
-            return {
-                'zotero_key': item['key'],
-                'title': item['data'].get('title', ''),
-                'abstract': item['data'].get('abstractNote', ''),
-                'authors': item['data'].get('creators', []),
-                'year': item['data'].get('date', ''),
-                'journal': item['data'].get('publicationTitle', ''),
-                'doi': item['data'].get('DOI', item['data'].get('ISBN', '')),
-                'keywords': [tag['tag'] for tag in item['data'].get('tags', [])],
-            }
-
         try:
             if not self.user_id:
                 items = client.items(limit=None)
-                batch_docs = [parse_item(item) for item in items if item['data']['itemType'] != 'attachment']
+                batch_docs = [self.parse_item(item) for item in items if item['data']['itemType'] != 'attachment']
                 if batch_docs:
                     yield batch_docs
             else:
@@ -74,7 +74,7 @@ class ZoteroClient:
                         break
                     
                     # Parse and filter items
-                    batch_docs = [parse_item(item) for item in items if item['data']['itemType'] != 'attachment']
+                    batch_docs = [self.parse_item(item) for item in items if item['data']['itemType'] != 'attachment']
                     if batch_docs:
                         yield batch_docs
                     
@@ -124,7 +124,17 @@ class ZoteroClient:
                     print(f"Error fetching group {group['id']}: {e}")
             
             # Drop duplicates based on doi
-            unique_docs = {doc['doi']: doc for doc in all_docs if doc.get('doi', None)}
+            unique_docs = {}
+            for doc in all_docs:
+                doi = doc.get('doi', None)
+                # Deduplicate by DOI
+                if doi:
+                    unique_docs[doi] = doc
+                else:
+                    # If no DOI, use Zotero key as fallback
+                    zotero_key = doc.get('zotero_key', None)
+                    if zotero_key:
+                        unique_docs[zotero_key] = doc
 
             return list(unique_docs.values())
             

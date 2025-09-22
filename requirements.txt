@@ -8,6 +8,8 @@ gradio==5.42.0
 scipy==1.16.1
 SQLAlchemy==2.0.43
 tqdm==4.67.1
+# Optional: NLTK for improved sentence splitting (fallback to regex if not available)
+nltk==3.9.1
 # CrewAI dependencies for agentic RAG
 crewai
 # crewai-tools

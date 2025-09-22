@@ -41,11 +41,21 @@ class ResearchAssistant:
             user_id=os.getenv("ZOTERO_USER_ID", None),
             api_key=os.getenv("ZOTERO_API_KEY", None)
         )
-        embedding_model = embedding_model or self.llm_config.get('embedding_model', {})
-        self.collection_name = collection_name or ResearchAssistant.DEFAULT_COLLECTION
+        
+        # Process embedding model configuration
+        embedding_config = embedding_model or self.llm_config.get('embedding_model', {})
+        self.collection_name = collection_name or embedding_config.get('collection_name') or ResearchAssistant.DEFAULT_COLLECTION
 
-        self.rag = RAGEngine(**embedding_model, collection_name=self.collection_name,
-                             server_url=f'http://{os.getenv('QDRANT_HOST', 'localhost')}:{os.getenv('QDRANT_PORT', '6333')}')
+        # Extract RAG-specific parameters
+        rag_params = {
+            'collection_name': self.collection_name,
+            'server_url': embedding_config.get('server_url', f'http://{os.getenv("QDRANT_HOST", "localhost")}:{os.getenv("QDRANT_PORT", "6333")}'),
+            'embedding_model': embedding_config.get('embedding_model', 'jinaai/jina-embeddings-v2-base-en'),
+            'embedding_model_size': embedding_config.get('embedding_model_size', 768),
+            'use_sentence_splitting': embedding_config.get('use_sentence_splitting', True)
+        }
+
+        self.rag = RAGEngine(**rag_params)
 
         answers_llm = answers_llm or self.llm_config.get('answers_llm', {})
         self.llm = LLMClient(**answers_llm)
@@ -76,6 +86,9 @@ class ResearchAssistant:
         db_path = os.path.join(project_root, "grafana/metrics.db")
         self.engine = init_db(f"sqlite:///{db_path}")
         self.db_session = get_session(self.engine)
+
+        # Initialize document cache
+        self.document_cache: Dict[str, Dict] = {}
 
         # Initialize status states
         self.zotero_status = gr.State(False)
@@ -122,6 +135,9 @@ class ResearchAssistant:
         zotero_documents = self.zotero.fetch_all_items() or []
         zotero_documents = [doc for doc in zotero_documents if doc['title'] != '' or doc['abstract'] != '' or len(doc.get('keywords', [])) > 0]
 
+        # Populate document cache
+        self._populate_document_cache(zotero_documents)
+
         if not self.rag.if_collection_exists(self.collection_name):
             self.debug_print(f"⚠️ Creating collection '{self.collection_name}'...")
             if zotero_documents:
@@ -133,6 +149,29 @@ class ResearchAssistant:
             self.debug_print(f"✅ Collection '{self.collection_name}' updated successfully!")
 
         return success, "\n".join(messages)
+
+    def _populate_document_cache(self, documents: List[Dict]) -> None:
+        """Populate the document cache with Zotero documents.
+        
+        Args:
+            documents: List of parsed Zotero documents
+        """
+        self.document_cache.clear()
+        for doc in documents:
+            zotero_key = doc.get('zotero_key')
+            if zotero_key:
+                self.document_cache[zotero_key] = doc
+
+    def get_document_by_key(self, zotero_key: str) -> Optional[Dict]:
+        """Retrieve full document information by Zotero key from cache.
+        
+        Args:
+            zotero_key: The Zotero key of the document to retrieve
+            
+        Returns:
+            Full document information or None if not found
+        """
+        return self.document_cache.get(zotero_key)
 
     def update_collection(self, collection_name: str, documents: List[Dict[str, Any]]) -> None:
         """Update the main Zotero collection in Qdrant."""
@@ -206,6 +245,8 @@ class ResearchAssistant:
         self.debug_print(f"INFO: Uploading documents to collection '{collection_name}'...")
         documents = self.zotero.fetch_all_items()
         if documents:
+            # Populate document cache
+            self._populate_document_cache(documents)
             self.rag.upload_documents(documents, collection_name)
             self.debug_print(f"SUCCESS: Uploaded {len(documents)} documents to '{collection_name}'.")
         else:
@@ -341,7 +382,25 @@ class ResearchAssistant:
                 # For now, use standard query rewriting - could be enhanced with agent insights
                 query = self.llm.rewrite_query(message)
             
-            context = sorted(context, key=lambda x: x.get('year', 0))
+            # Enrich context with full document information from cache
+            enriched_context = []
+            for doc in context:
+                zotero_key = doc.get('zotero_key', '')
+                if zotero_key:
+                    full_doc = self.get_document_by_key(zotero_key)
+                    if full_doc:
+                        # Merge the RAG result with full document info
+                        enriched_doc = full_doc.copy()
+                        enriched_doc.update(doc)  # RAG results take precedence for score, etc.
+                        enriched_context.append(enriched_doc)
+                    else:
+                        # Fallback to RAG result if not in cache
+                        enriched_context.append(doc)
+                else:
+                    # Fallback to RAG result if no zotero_key
+                    enriched_context.append(doc)
+            
+            context = sorted(enriched_context, key=lambda x: x.get('year', 0))
             
             # Generate enhanced prompt with agentic insights
             enhanced_context = context
@@ -435,7 +494,26 @@ class ResearchAssistant:
             query = self.llm.rewrite_query(message)
             self.debug_print(f"INFO: Processed query: {query}")
             context = self.rag.search_documents(query)
-            context = sorted(context, key=lambda x: x['year'])
+            
+            # Enrich context with full document information from cache
+            enriched_context = []
+            for doc in context:
+                zotero_key = doc.get('zotero_key', '')
+                if zotero_key:
+                    full_doc = self.get_document_by_key(zotero_key)
+                    if full_doc:
+                        # Merge the RAG result with full document info
+                        enriched_doc = full_doc.copy()
+                        enriched_doc.update(doc)  # RAG results take precedence for score, etc.
+                        enriched_context.append(enriched_doc)
+                    else:
+                        # Fallback to RAG result if not in cache
+                        enriched_context.append(doc)
+                else:
+                    # Fallback to RAG result if no zotero_key
+                    enriched_context.append(doc)
+            
+            context = sorted(enriched_context, key=lambda x: x['year'])
             analysis = self.llm.ask_question(query, context)
             
             # Log the interaction

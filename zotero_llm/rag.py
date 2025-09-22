@@ -177,6 +177,7 @@ class RAGEngine:
         When sentence splitting is enabled, creates separate chunks for:
         - Full title (if present)
         - Each sentence from abstract
+        - Keywords as a separate chunk
         - Combined title + abstract as fallback
         
         Args:
@@ -227,9 +228,19 @@ class RAGEngine:
                 })
                 chunk_index += 1
         
+        # Add keywords as a separate chunk if they exist
+        if keywords:
+            keywords_text = ", ".join(keywords)
+            chunks.append({
+                'text': f"Keywords: {keywords_text}",
+                'chunk_type': 'keywords',
+                'chunk_index': chunk_index
+            })
+            chunk_index += 1
+        
         # Add a combined chunk as fallback for broader matching
-        if title or abstract:
-            combined_text = f'Title: {title}\nAbstract: {abstract}' if title and abstract else title or abstract
+        if title or abstract or keywords:
+            combined_text = f'Title: {title}\nAbstract: {abstract}\nKeywords: {", ".join(keywords)}'
             chunks.append({
                 'text': combined_text,
                 'chunk_type': 'combined_fallback',
@@ -437,12 +448,6 @@ class RAGEngine:
                         chunk_payload['sentence_index'] = chunk['sentence_index']
                         chunk_payload['total_sentences'] = chunk['total_sentences']
                     
-                    # Prepare keyword text for BM25
-                    keywords_text = ", ".join(doc.get("keywords", []))
-                    bm25_text = chunk['text']
-                    if keywords_text: # and chunk_payload['chunk_type'] == 'combined_fallback':
-                        bm25_text += f"\nKeywords: {keywords_text}"
-                    
                     point = models.PointStruct(
                         id=point_id,
                         vector={
@@ -451,7 +456,7 @@ class RAGEngine:
                                 model=self.embedding_model_name,
                             ),
                             "bm25": models.Document(
-                                text=bm25_text,
+                                text=chunk['text'],
                                 model="Qdrant/bm25",
                             ),
                         },

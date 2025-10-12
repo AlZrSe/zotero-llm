@@ -14,3 +14,5 @@ evaluation/prompt_results/*
 log.csv
 grafana/*
 migrations/versions/__pycache__/*
+tests/*
+qoder.md/*

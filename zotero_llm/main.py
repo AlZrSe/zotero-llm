@@ -74,7 +74,8 @@ class ResearchAssistant:
                 self.agentic_rag = AgenticRAGEngine(
                     rag_engine=self.rag,
                     llm_client=agent_llm,
-                    agent_llm_config=self.llm_config.get('agentic_rag', {})
+                    agent_llm_config=self.llm_config.get('agentic_rag', {}),
+                    document_resolver=self.get_document_by_key
                 )
                 self.agentic_rag_enabled = True
                 self.debug_print("✅ Agentic RAG initialized successfully!")
@@ -356,7 +357,7 @@ class ResearchAssistant:
             self.debug_print(f"INFO: Processing agentic query: {message}")
             
             # Use agentic RAG for enhanced search
-            agentic_results = self.agentic_rag.agentic_search(message)
+            agentic_results = self.agentic_rag.iterative_agentic_search(message)
             
             # Log the estimated limit for debugging
             estimated_limit = agentic_results.get('estimated_limit', 'unknown')
@@ -370,6 +371,10 @@ class ResearchAssistant:
             else:
                 self.debug_print(f"INFO: Agentic RAG estimated optimal limit: {estimated_limit} documents")
             
+            # Log accumulated irrelevant documents count
+            irrelevant_count = len(agentic_results.get('irrelevant_documents_accumulated', []))
+            self.debug_print(f"INFO: Accumulated {irrelevant_count} irrelevant documents during search")
+            
             # Extract context from agentic results
             if agentic_results.get('fallback_used', False):
                 self.debug_print("INFO: Agentic RAG used fallback, processing standard results")
@@ -378,7 +383,7 @@ class ResearchAssistant:
             else:
                 self.debug_print("INFO: Agentic RAG completed successfully")
                 # Extract documents from agentic results
-                context = agentic_results.get('standard_results', [])
+                context = agentic_results.get('documents', [])
                 # For now, use standard query rewriting - could be enhanced with agent insights
                 query = self.llm.rewrite_query(message)
             
@@ -646,7 +651,7 @@ class ResearchAssistant:
                     metrics_panel = gr.Markdown("")
 
                 # Define wrapper that returns answer + metrics based on selected mode
-                def process_query_and_metrics(message, history=None, rag_mode="Standard RAG"):
+                def process_query_and_metrics(message, history=None, rag_mode=None):
                     if rag_mode == "Agentic RAG" and self.agentic_rag_enabled:
                         answer = self.process_agentic_query(message, history)
                     else:
@@ -670,22 +675,17 @@ class ResearchAssistant:
 
                 # Left: Chat interface
                 with left_col:
-                    # Create a wrapper function that captures the current RAG mode
-                    def chat_fn(message, history, rag_mode_val=None):
-                        # Get current RAG mode from the toggle
-                        current_mode = rag_mode_val if rag_mode_val is not None else "Standard RAG"
-                        return process_query_and_metrics(message, history, current_mode)
-                    
                     chat = gr.ChatInterface(
-                        fn=lambda message, history: process_query_and_metrics(
+                        fn=lambda message, history, rag_mode: process_query_and_metrics(
                             message, 
-                            history, 
-                            rag_mode_toggle.value if self.agentic_rag_enabled else "Standard RAG"
+                            history,
+                            rag_mode
                         ),
+                        additional_inputs=[rag_mode_toggle],
                         examples=[
-                            "What are the main themes in my library about machine learning?",
-                            "Summarize the recent papers about natural language processing.",
-                            "What are the key findings about deep learning architectures?"
+                            ["What are the main themes in my library about machine learning?"],
+                            ["Summarize the recent papers about natural language processing."],
+                            ["What are the key findings about deep learning architectures?"]
                         ],
                         title="Research Assistant Chat",
                         description="Ask questions about your Zotero library and get AI-powered insights.",

@@ -35,6 +35,16 @@ class SearchResult(BaseModel):
     confidence: float = Field(default=0.0, description="Confidence score for the search")
 
 
+class RelevanceCheckResult(BaseModel):
+    """Result from relevance checking."""
+    relevant_documents: List[Dict] = Field(description="Documents deemed relevant")
+    irrelevant_documents: List[Dict] = Field(description="Documents deemed irrelevant")
+    relevance_scores: Dict[str, float] = Field(description="Relevance scores for each document")
+    overall_relevance: float = Field(description="Overall relevance score for the search")
+    needs_continuation: bool = Field(description="Whether more search iterations are needed")
+    query_rewrite: Optional[str] = Field(default=None, description="Rewritten query if needed")
+
+
 class RAGSearchTool(BaseTool):
     """Custom tool for RAG search operations."""
     name: str = "rag_search"
@@ -68,7 +78,8 @@ class RAGSearchTool(BaseTool):
                     "authors": doc.get("authors", []),
                     "year": doc.get("year", ""),
                     "doi": doc.get("doi", ""),
-                    "score": doc.get("score", 0.0)
+                    "score": doc.get("score", 0.0),
+                    "zotero_key": doc.get("zotero_key", "")
                 }
                 formatted_results.append(formatted_doc)
             
@@ -224,11 +235,20 @@ class AgenticRAGEngine:
     """
     
     def __init__(self, rag_engine: RAGEngine, llm_client: LLMClient, 
-                 agent_llm_config: Optional[Dict] = None):
-        """Initialize the agentic RAG engine."""
+                 agent_llm_config: Optional[Dict] = None,
+                 document_resolver: Optional[callable] = None):
+        """Initialize the agentic RAG engine.
+        
+        Args:
+            rag_engine: The RAG engine for document search
+            llm_client: The LLM client for agent interactions
+            agent_llm_config: Configuration for agent LLMs
+            document_resolver: Function to resolve Zotero keys to full document metadata
+        """
         self.rag_engine = rag_engine
         self.llm_client = llm_client
         self.agent_llm_config = agent_llm_config or {}
+        self.document_resolver = document_resolver or (lambda key: {"zotero_key": key})
         
         # Initialize tools
         self.rag_search_tool = RAGSearchTool(rag_engine)
@@ -282,6 +302,20 @@ class AgenticRAGEngine:
             llm=self._get_agent_llm()
         )
         
+        # Relevance Check Agent - evaluates document relevance and decides on next steps
+        self.relevance_agent = Agent(
+            role="Relevance Evaluator",
+            goal="Evaluate document relevance, remove irrelevant items, and decide on search continuation",
+            backstory="""You are an expert in evaluating the relevance of academic documents to research queries.
+            You can analyze document content to determine how well it matches the research question,
+            identify irrelevant documents, and make informed decisions about whether to continue searching
+            or if sufficient relevant documents have been found. You can also suggest query refinements
+            to improve search results when needed.""",
+            tools=[],  # No tools - will use LLM directly
+            verbose=True,
+            llm=self._get_agent_llm()
+        )
+        
         # Synthesis Agent - combines and evaluates results
         self.synthesis_agent = Agent(
             role="Research Synthesizer",
@@ -300,6 +334,134 @@ class AgenticRAGEngine:
         """Get LLM configuration for agents."""
         # Use the existing LLM client configuration
         return self.llm_client.model_name
+    
+    def _check_relevance_with_llm(self, query: str, documents: List[Dict], 
+                                 current_limit: int, relevant_count: int = 0, 
+                                 iteration: int = 1) -> RelevanceCheckResult:
+        """
+        Check document relevance using LLM directly without tools.
+        
+        Args:
+            query: The research query
+            documents: List of documents to evaluate
+            current_limit: Target number of documents
+            relevant_count: Number of relevant documents already found
+            iteration: Current iteration number
+            
+        Returns:
+            RelevanceCheckResult with evaluation results
+        """
+        try:
+            # Format documents for LLM analysis
+            formatted_docs = []
+            for i, doc in enumerate(documents):
+                formatted_doc = {
+                    "index": i,
+                    "title": doc.get("title", ""),
+                    "abstract": doc.get("abstract", ""),
+                    "authors": doc.get("authors", []),
+                    "year": doc.get("year", ""),
+                }
+                formatted_docs.append(formatted_doc)
+            
+            # Create prompt for relevance assessment
+            prompt = f"""
+            As a research relevance expert, analyze the following documents for relevance to the query: "{query}"
+            
+            Documents to evaluate:
+            {json.dumps(formatted_docs, indent=2)}
+            
+            Current search status:
+            - Target document count: {current_limit}
+            - Already found relevant documents: {relevant_count}
+            - Search iteration: {iteration}
+            
+            For each document, provide:
+            1. A relevance score from 0.0 (not relevant) to 1.0 (highly relevant)
+            2. Brief reasoning for the score
+            3. Whether to include or exclude the document
+            
+            Also provide:
+            1. Overall relevance assessment of the search results
+            2. Whether to continue searching for more documents
+            3. If continuing, suggest a refined query to improve results
+            4. If stopping, explain why sufficient relevant documents were found
+            
+            Respond in JSON format with this structure:
+            {{
+                "document_scores": [
+                    {{
+                        "index": 0,
+                        "relevance_score": 0.8,
+                        "reasoning": "Reason for score",
+                        "include": true
+                    }}
+                ],
+                "overall_relevance": 0.75,
+                "continue_search": false,
+                "refined_query": "Optional refined query if continuing",
+                "reasoning": "Overall assessment reasoning"
+            }}
+            """
+            
+            # Get LLM assessment
+            messages = [{"role": "user", "content": prompt}]
+            response = self.llm_client.ask_llm(messages)
+            
+            # Extract JSON from response
+            try:
+                result_data = json.loads(response)
+            except json.JSONDecodeError:
+                # Try to extract JSON from code blocks
+                import re
+                json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
+                if json_match:
+                    result_data = json.loads(json_match.group(1))
+                else:
+                    raise ValueError("Could not extract JSON from LLM response")
+            
+            # Process document scores and separate relevant/irrelevant documents
+            relevant_docs = []
+            irrelevant_docs = []
+            relevance_scores = {}
+            
+            for i, doc in enumerate(documents):
+                # Find the score for this document
+                doc_score = None
+                for score_info in result_data.get("document_scores", []):
+                    if score_info.get("index") == i:
+                        doc_score = score_info
+                        break
+                
+                if doc_score and doc_score.get("include", False) and doc_score.get("relevance_score", 0) > 0.3:
+                    doc["relevance_score"] = doc_score["relevance_score"]
+                    relevant_docs.append(doc)
+                else:
+                    irrelevant_docs.append(doc)
+                
+                # Store relevance score
+                relevance_scores[doc.get("zotero_key", f"doc_{i}")] = doc_score.get("relevance_score", 0) if doc_score else 0
+            
+            # Create RelevanceCheckResult
+            return RelevanceCheckResult(
+                relevant_documents=relevant_docs,
+                irrelevant_documents=irrelevant_docs,
+                relevance_scores=relevance_scores,
+                overall_relevance=result_data.get("overall_relevance", 0.0),
+                needs_continuation=result_data.get("continue_search", False),
+                query_rewrite=result_data.get("refined_query")
+            )
+            
+        except Exception as e:
+            # Return a default result in case of error
+            return RelevanceCheckResult(
+                relevant_documents=[],
+                irrelevant_documents=documents,
+                relevance_scores={},
+                overall_relevance=0.0,
+                needs_continuation=False,
+                query_rewrite=None
+            )
     
     def agentic_search(self, query: str, limit: Optional[int] = None) -> Dict[str, Any]:
         """
@@ -466,6 +628,160 @@ class AgenticRAGEngine:
                 "error": str(e),
                 "fallback_used": True
             }
+    
+    def iterative_agentic_search(self, query: str, limit: Optional[int] = None, 
+                                max_iterations: int = 3) -> Dict[str, Any]:
+        """
+        Perform iterative agentic RAG search with relevance checking and refinement.
+        
+        Args:
+            query: The research query
+            limit: Maximum number of documents to return
+            max_iterations: Maximum number of search iterations to perform
+            
+        Returns:
+            Dictionary containing search results and agent insights
+        """
+        try:
+            # Determine the final limit
+            if limit is not None:
+                final_limit = limit
+                limit_source = "manual_override"
+            else:
+                # For agentic RAG, let the standard RAG check for user-requested limits first
+                rag_results_with_metadata = self.rag_engine.search_documents(
+                    query, limit=None, return_metadata=True
+                )
+                
+                if rag_results_with_metadata["limit_source"] == "user_request":
+                    # User explicitly requested a limit - honor it
+                    final_limit = rag_results_with_metadata["limit"]
+                    limit_source = "user_request"
+                else:
+                    # Use intelligent estimation
+                    final_limit = self._estimate_limit(query)
+                    limit_source = "intelligent_estimation"
+            
+            print(f"Starting iterative agentic search for '{query}' with target of {final_limit} documents")
+            
+            # Track search progress
+            all_documents = []
+            relevant_documents = []
+            irrelevant_documents = []
+            iteration = 1
+            current_query = query
+            continue_search = True
+            
+            while continue_search and iteration <= max_iterations and len(relevant_documents) < final_limit:
+                print(f"Search iteration {iteration}")
+                
+                # Execute search with current query
+                search_results = self.rag_engine.search_documents(current_query, limit=final_limit * 2)
+                
+                if not search_results:
+                    print("No documents found in this iteration")
+                    break
+                
+                # Combine with previous results to avoid duplicates
+                combined_documents = self._combine_documents(all_documents, search_results)
+                
+                # Remove previously identified irrelevant documents from combined_documents
+                if irrelevant_documents:
+                    irrelevant_keys = {doc.get("zotero_key") for doc in irrelevant_documents if doc.get("zotero_key")}
+                    combined_documents = [doc for doc in combined_documents if doc.get("zotero_key") not in irrelevant_keys]
+                    print(f"Removed {len(irrelevant_keys)} previously identified irrelevant documents from current search")
+                
+                # Remove previously identified relevant documents from combined_documents when asking LLM
+                # (but keep them in the final context)
+                documents_for_llm_check = combined_documents
+                if relevant_documents:
+                    relevant_keys = {doc.get("zotero_key") for doc in relevant_documents if doc.get("zotero_key")}
+                    documents_for_llm_check = [doc for doc in combined_documents if doc.get("zotero_key") not in relevant_keys]
+                    print(f"Excluding {len(relevant_keys)} previously identified relevant documents from LLM relevance check")
+                
+                # Check relevance of documents using LLM directly (no tools)
+                relevance_result = self._check_relevance_with_llm(
+                    query=current_query,
+                    documents=documents_for_llm_check,
+                    current_limit=final_limit,
+                    relevant_count=len(relevant_documents),
+                    iteration=iteration
+                )
+                
+                # Add relevant documents to our collection
+                relevant_documents.extend(relevance_result.relevant_documents)
+                all_documents = combined_documents
+                
+                print(f"Found {len(relevance_result.relevant_documents)} relevant documents in iteration {iteration}")
+                print(f"Total relevant documents: {len(relevant_documents)}")
+                
+                # Check if we should continue
+                continue_search = (
+                    relevance_result.needs_continuation and 
+                    len(relevant_documents) < final_limit and
+                    iteration < max_iterations
+                )
+                
+                # Update query if a refinement was suggested
+                if continue_search and relevance_result.query_rewrite:
+                    current_query = relevance_result.query_rewrite
+                    print(f"Refining query to: '{current_query}'")
+                
+                iteration += 1
+            
+            # Return top relevant documents up to the limit
+            final_documents = sorted(relevant_documents, 
+                                   key=lambda x: x.get("relevance_score", 0), 
+                                   reverse=True)[:final_limit]
+            
+            return {
+                "documents": final_documents,
+                "total_relevant_found": len(relevant_documents),
+                "iterations_performed": iteration - 1,
+                "final_query": current_query,
+                "query": query,
+                "estimated_limit": final_limit,
+                "limit_source": limit_source
+            }
+            
+        except Exception as e:
+            print(f"Iterative agentic RAG failed: {e}")
+            # Fallback to standard agentic search
+            return self.agentic_search(query, limit)
+    
+    def _estimate_limit(self, query: str, base_limit: int = 5) -> int:
+        """Estimate document limit (simplified version of LimitEstimationTool)."""
+        # Use the RAG engine's estimation method
+        return self.rag_engine._estimate_optimal_limit(query, base_limit)
+    
+    def _combine_documents(self, existing_docs: List[Dict], new_docs: List[Dict]) -> List[Dict]:
+        """Combine document lists, removing duplicates and resolving Zotero keys to full metadata."""
+        combined = existing_docs.copy()
+        existing_keys = {doc.get("zotero_key") for doc in existing_docs if doc.get("zotero_key")}
+        
+        for doc in new_docs:
+            zotero_key = doc.get("zotero_key")
+            if zotero_key and zotero_key not in existing_keys:
+                # Resolve Zotero key to full document metadata if resolver is available
+                if self.document_resolver and zotero_key:
+                    try:
+                        full_doc = self.document_resolver(zotero_key)
+                        if full_doc:
+                            # Merge the RAG result with full document info
+                            enriched_doc = full_doc.copy()
+                            enriched_doc.update(doc)  # RAG results take precedence for score, etc.
+                            combined.append(enriched_doc)
+                        else:
+                            # If resolver fails, add the original document
+                            combined.append(doc)
+                    except Exception:
+                        # If resolver fails, add the original document
+                        combined.append(doc)
+                else:
+                    combined.append(doc)
+                existing_keys.add(zotero_key)
+        
+        return combined
     
     def get_agent_insights(self, query: str) -> Dict[str, Any]:
         """

@@ -73,8 +73,8 @@ class ResearchAssistant:
                 agent_llm = LLMClient(**agent_llm_config) if agent_llm_config else self.llm
                 self.agentic_rag = AgenticRAGEngine(
                     rag_engine=self.rag,
-                    llm_client=agent_llm,
-                    agent_llm_config=self.llm_config.get('agentic_rag', {}),
+                    agentic_llm_client=agent_llm,
+                    answers_llm_client=self.llm,
                     document_resolver=self.get_document_by_key
                 )
                 self.agentic_rag_enabled = True
@@ -356,8 +356,8 @@ class ResearchAssistant:
             usage.reset()
             self.debug_print(f"INFO: Processing agentic query: {message}")
             
-            # Use agentic RAG for enhanced search
-            agentic_results = self.agentic_rag.iterative_agentic_search(message)
+            # Use unified agentic RAG for enhanced search
+            agentic_results = self.agentic_rag.unified_agentic_search(message, max_iterations=3)
             
             # Log the estimated limit for debugging
             estimated_limit = agentic_results.get('estimated_limit', 'unknown')
@@ -365,7 +365,7 @@ class ResearchAssistant:
             user_requested = agentic_results.get('user_requested_limit')
             
             if limit_source == 'user_request':
-                self.debug_print(f"INFO: Using user-requested limit: {estimated_limit} documents")
+                self.debug_print(f"INFO: Using user-requested limit: {user_requested} documents")
             elif limit_source == 'manual_override':
                 self.debug_print(f"INFO: Using manually specified limit: {estimated_limit} documents")
             else:

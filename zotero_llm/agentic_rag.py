@@ -1,14 +1,16 @@
 """
-Agentic RAG implementation using CrewAI for enhanced research assistance.
+Agentic RAG implementation for iterative document search with relevance estimation.
 
-This module provides an agentic approach to retrieval-augmented generation,
-using multiple specialized agents to improve query understanding, search
-strategies, and result synthesis while preserving the existing RAG functionality.
+This module provides a simplified agentic approach using CrewAI focused on:
+1. Searching documents in Qdrant using a tool
+2. Estimating optimal search limits
+3. Iterative relevance checking using LLM
+4. Supervisor agent that returns only relevant documents
 """
 
 import json
-import os
-from typing import Dict, List, Optional, Any
+import re
+from typing import Dict, List, Optional, Any, Callable
 from crewai import Agent, Task, Crew, Process
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -16,815 +18,859 @@ from zotero_llm.rag import RAGEngine
 from zotero_llm.llm import LLMClient
 
 
-# Apply bounds
-MIN_LIMIT = 3   # Always get at least 3 documents
-MAX_LIMIT = 50  # Cap at 15 to avoid overwhelming results
+# Search limit bounds
+MIN_LIMIT = 3
+MAX_LIMIT = 50
+
+# --- Add Pydantic models for CrewAI Task output_json ----
+class SearchDocumentModel(BaseModel):
+    zotero_key: Optional[str] = None
+    score: Optional[float] = None
+
+class SearchResultsModel(BaseModel):
+    documents: List[SearchDocumentModel] = []
+    query: Optional[str] = None
+    limit_used: Optional[int] = None
+
+class LimitEstimationModel(BaseModel):
+    estimated_limit: int
+    source: str
+    reasoning: Optional[str] = ""
+
+class RelevanceEvalDoc(BaseModel):
+    index: int
+    relevance_score: float
+    relevance_reason: Optional[str] = ""
+    is_relevant: bool = Field(description="Whether the document is relevant (True/False)")
+
+class RelevanceEvalModel(BaseModel):
+    relevant_documents: List[RelevanceEvalDoc] = []
+    irrelevant_documents: List[RelevanceEvalDoc] = []
+    needs_more_search: bool = False
+    refined_query: Optional[str] = None
 
 
-class SearchParameters(BaseModel):
-    """Parameters for search operations."""
-    query: str = Field(description="The search query")
-    limit: int = Field(default=5, description="Number of results to return")
-    strategy: str = Field(default="hybrid", description="Search strategy: semantic, bm25, or hybrid")
+class UnifiedSearchResult(BaseModel):
+    documents: List[Dict] = []
+    query: str
+    total_found: int
+    iterations_used: int = 1
+    search_strategy: str = "unified agentic search"
 
 
-class SearchResult(BaseModel):
-    """Result from a search operation."""
-    documents: List[Dict] = Field(description="Retrieved documents")
-    strategy_used: str = Field(description="Strategy used for retrieval")
-    confidence: float = Field(default=0.0, description="Confidence score for the search")
-
-
-class RelevanceCheckResult(BaseModel):
-    """Result from relevance checking."""
-    relevant_documents: List[Dict] = Field(description="Documents deemed relevant")
-    irrelevant_documents: List[Dict] = Field(description="Documents deemed irrelevant")
-    relevance_scores: Dict[str, float] = Field(description="Relevance scores for each document")
-    overall_relevance: float = Field(description="Overall relevance score for the search")
-    needs_continuation: bool = Field(description="Whether more search iterations are needed")
-    query_rewrite: Optional[str] = Field(default=None, description="Rewritten query if needed")
-
-
-class RAGSearchTool(BaseTool):
-    """Custom tool for RAG search operations."""
-    name: str = "rag_search"
-    description: str = "Search academic documents using various retrieval strategies"
+class QdrantSearchTool(BaseTool):
+    """CrewAI tool for searching documents in Qdrant using RAG engine's search_documents method."""
+    name: str = "qdrant_search"
+    description: str = """Search academic documents in Qdrant vector database using RAG engine.
+    Input: query (str) and optional limit (int, default 10).
+    Returns: JSON with documents list including title, abstract, authors, year, zotero_key, and score."""
     rag_engine: RAGEngine = Field(description="RAG engine for document search")
+    document_resolver: Optional[Callable] = Field(description="Function to resolve Zotero keys to full metadata")
     
     model_config = {"arbitrary_types_allowed": True}
     
-    def __init__(self, rag_engine: RAGEngine):
-        super().__init__(rag_engine=rag_engine)
+    def __init__(self, rag_engine: RAGEngine, document_resolver: Optional[Callable] = None):
+        """Initialize search tool with RAG engine.
+        
+        Args:
+            rag_engine: RAG engine that provides search_documents method
+            document_resolver: Function to resolve Zotero keys to full metadata (optional)
+        """
+        super().__init__(rag_engine=rag_engine, document_resolver=document_resolver)
     
-    def _run(self, query: str, limit: int = 5, strategy: str = "hybrid") -> str:
-        """Execute RAG search with specified parameters."""
+    def _run(self, query: str, limit: int = 10) -> str:
+        """Execute search in Qdrant using RAG engine's search_documents method.
+        
+        This method delegates to rag_engine.search_documents() which handles:
+        - Query embedding generation
+        - Hybrid search (semantic + BM25)
+        - Document deduplication
+        - Score normalization
+        
+        Args:
+            query: Search query string
+            limit: Maximum number of documents to retrieve (default: 10)
+            
+        Returns:
+            JSON string with documents and metadata
+        """
         try:
-            if strategy == "semantic":
-                # Perform semantic-only search by modifying the search parameters
-                results = self.rag_engine.search_documents(query, limit=limit)
-            elif strategy == "bm25":
-                # For BM25-only search, we'd need to modify the RAG engine
-                # For now, use the hybrid approach as fallback
-                results = self.rag_engine.search_documents(query, limit=limit)
-            else:  # hybrid
-                results = self.rag_engine.search_documents(query, limit=limit)
+            # Use RAG engine's search_documents method
+            # This handles all the complexity: embedding, hybrid search, deduplication
+            results = self.rag_engine.search_documents(
+                query=query,
+                limit=limit,
+                deduplicate_documents=True
+            )
             
             # Format results for agent consumption
             formatted_results = []
             for doc in results:
-                formatted_doc = {
-                    "title": doc.get("title", ""),
-                    "abstract": doc.get("abstract", ""),
-                    "authors": doc.get("authors", []),
-                    "year": doc.get("year", ""),
-                    "doi": doc.get("doi", ""),
-                    "score": doc.get("score", 0.0),
-                    "zotero_key": doc.get("zotero_key", "")
-                }
-                formatted_results.append(formatted_doc)
+                # Always enrich with full metadata from Zotero using document_resolver
+                zotero_key = doc.get("zotero_key")
+                if zotero_key and self.document_resolver:
+                    try:
+                        full_metadata = self.document_resolver(zotero_key)
+                        if full_metadata:
+                            doc.update(full_metadata)
+                    except Exception as e:
+                        print(f"Warning: Failed to resolve metadata for {zotero_key}: {e}")
+                
+                formatted_results.append(doc)
             
             return json.dumps({
                 "documents": formatted_results,
-                "strategy_used": strategy,
-                "total_results": len(formatted_results)
-            })
+                "count": len(formatted_results),
+                "query": query,
+                "limit_used": limit
+            }, indent=2)
+            
         except Exception as e:
-            return json.dumps({"error": str(e), "documents": []})
-
-
-class QueryAnalysisTool(BaseTool):
-    """Tool for analyzing and decomposing complex queries."""
-    name: str = "query_analysis"
-    description: str = "Analyze research queries to identify key concepts and search strategies"
-    
-    def _run(self, query: str) -> str:
-        """Analyze the query and suggest search strategies."""
-        # Simple analysis - in practice, this could use NLP techniques
-        keywords = query.lower().split()
-        
-        # Identify query characteristics
-        has_author_names = any(word.istitle() for word in query.split())
-        has_years = any(word.isdigit() and len(word) == 4 for word in keywords)
-        has_technical_terms = any(len(word) > 8 for word in keywords)
-        
-        analysis = {
-            "original_query": query,
-            "keywords": keywords,
-            "characteristics": {
-                "has_author_names": has_author_names,
-                "has_years": has_years,
-                "has_technical_terms": has_technical_terms
-            },
-            "suggested_strategies": []
-        }
-        
-        # Suggest search strategies based on analysis
-        if has_technical_terms:
-            analysis["suggested_strategies"].append("semantic")
-        if has_author_names or has_years:
-            analysis["suggested_strategies"].append("bm25")
-        if not analysis["suggested_strategies"]:
-            analysis["suggested_strategies"].append("hybrid")
-        
-        return json.dumps(analysis)
-
-
-class LimitEstimationTool(BaseTool):
-    """Tool for intelligent estimation of search result limits based on query complexity."""
-    name: str = "limit_estimation"
-    description: str = "Estimate optimal document limit based on query characteristics and research scope"
-    
-    def _run(self, query: str, base_limit: int = 5) -> str:
-        """Estimate optimal document limit for the given query."""
-        # Analyze query characteristics
-        query_lower = query.lower()
-        words = query.split()
-        
-        # Factors that increase limit
-        complexity_factors = 0
-        
-        # 1. Broad vs specific queries
-        broad_terms = ['overview', 'review', 'survey', 'comprehensive', 'systematic', 'meta-analysis', 
-                      'state of the art', 'recent advances', 'current trends', 'developments']
-        if any(term in query_lower for term in broad_terms):
-            complexity_factors += 3  # Broad queries need more documents
-        
-        # 2. Comparative queries
-        comparative_terms = ['compare', 'comparison', 'versus', 'vs', 'differences', 'similarities', 
-                           'contrast', 'alternative', 'approaches', 'methods']
-        if any(term in query_lower for term in comparative_terms):
-            complexity_factors += 2  # Comparisons need multiple perspectives
-        
-        # 3. Multi-faceted queries (multiple concepts)
-        question_words = ['what', 'how', 'why', 'when', 'where', 'which']
-        conjunctions = ['and', 'or', 'but', 'as well as', 'along with']
-        
-        if len([w for w in words if w.lower() in question_words]) > 1:
-            complexity_factors += 1  # Multiple questions
-        
-        if any(conj in query_lower for conj in conjunctions):
-            complexity_factors += 1  # Multiple concepts connected
-        
-        # 4. Technical depth indicators
-        technical_terms = ['algorithm', 'model', 'framework', 'architecture', 'implementation',
-                          'methodology', 'technique', 'approach', 'analysis', 'evaluation']
-        if len([w for w in words if w.lower() in technical_terms]) >= 2:
-            complexity_factors += 1  # Technical queries may need more sources
-        
-        # 5. Temporal scope
-        temporal_terms = ['recent', 'latest', 'current', 'new', 'emerging', 'future', 'trend']
-        historical_terms = ['history', 'evolution', 'development', 'progress', 'over time']
-        
-        if any(term in query_lower for term in temporal_terms):
-            complexity_factors += 1  # Recent work queries
-        elif any(term in query_lower for term in historical_terms):
-            complexity_factors += 2  # Historical queries need broader coverage
-        
-        # 6. Query length as complexity indicator
-        if len(words) > 15:
-            complexity_factors += 1  # Long queries are typically complex
-        elif len(words) > 25:
-            complexity_factors += 2  # Very long queries
-        
-        # Factors that decrease limit (specific queries)
-        specificity_factors = 0
-        
-        # 1. Specific author or paper references
-        if any(word[0].isupper() and len(word) > 3 for word in words):
-            specificity_factors += 1  # Likely author names
-        
-        # 2. Very specific technical terms or acronyms
-        acronyms = [w for w in words if w.isupper() and len(w) >= 2]
-        if len(acronyms) >= 2:
-            specificity_factors += 1  # Multiple acronyms suggest specific domain
-        
-        # 3. Specific numerical or year references
-        if any(w.isdigit() and len(w) == 4 and 1900 <= int(w) <= 2030 for w in words):
-            specificity_factors += 1  # Year references
-        
-        # Calculate final limit
-        estimated_limit = base_limit * max(complexity_factors - specificity_factors, 1)
-        
-        # Apply bounds
-        estimated_limit = max(MIN_LIMIT, min(MAX_LIMIT, estimated_limit))
-        
-        estimation_details = {
-            "estimated_limit": estimated_limit,
-            "base_limit": base_limit,
-            "complexity_factors": complexity_factors,
-            "specificity_factors": specificity_factors,
-            "query_characteristics": {
-                "word_count": len(words),
-                "has_broad_terms": any(term in query_lower for term in broad_terms),
-                "has_comparative_terms": any(term in query_lower for term in comparative_terms),
-                "has_technical_terms": len([w for w in words if w.lower() in technical_terms]) >= 2,
-                "has_temporal_terms": any(term in query_lower for term in temporal_terms + historical_terms),
-                "has_author_references": any(word[0].isupper() and len(word) > 3 for word in words),
-                "acronym_count": len(acronyms)
-            },
-            "reasoning": f"Query analysis: complexity_factors={complexity_factors}, specificity_factors={specificity_factors}, final_limit={estimated_limit}"
-        }
-        
-        return json.dumps(estimation_details)
+            return json.dumps({
+                "error": str(e),
+                "documents": [],
+                "count": 0
+            })
 
 
 class AgenticRAGEngine:
     """
-    Agentic RAG Engine that uses CrewAI to orchestrate multiple agents
-    for enhanced research assistance while preserving existing RAG functionality.
+    Agentic RAG Engine with iterative search and relevance filtering using CrewAI.
+    
+    Uses:
+    - QdrantSearchTool: For searching documents (only tool)
+    - Limit Estimation Agent: Estimates optimal document count from query
+    - Search Agent: Uses tool to search documents based on estimated limit
+    - Relevance Agent: Evaluates relevance (uses answers_llm)
+    - Supervisor Agent: Orchestrates iterative process
     """
     
-    def __init__(self, rag_engine: RAGEngine, llm_client: LLMClient, 
-                 agent_llm_config: Optional[Dict] = None,
-                 document_resolver: Optional[callable] = None):
+    def __init__(self, rag_engine: RAGEngine, 
+                 agentic_llm_client: LLMClient,
+                 answers_llm_client: LLMClient,
+                 document_resolver: Optional[Callable] = None):
         """Initialize the agentic RAG engine.
         
         Args:
-            rag_engine: The RAG engine for document search
-            llm_client: The LLM client for agent interactions
-            agent_llm_config: Configuration for agent LLMs
-            document_resolver: Function to resolve Zotero keys to full document metadata
+            rag_engine: RAG engine for Qdrant search
+            agentic_llm_client: LLM client for agentic operations (from agentic_rag config)
+            answers_llm_client: LLM client for relevance evaluation (from answers_llm config)
+            document_resolver: Function to resolve Zotero keys to full metadata
         """
         self.rag_engine = rag_engine
-        self.llm_client = llm_client
-        self.agent_llm_config = agent_llm_config or {}
+        self.agentic_llm = agentic_llm_client
+        self.answers_llm = answers_llm_client
         self.document_resolver = document_resolver or (lambda key: {"zotero_key": key})
         
-        # Initialize tools
-        self.rag_search_tool = RAGSearchTool(rag_engine)
-        self.query_analysis_tool = QueryAnalysisTool()
-        self.limit_estimation_tool = LimitEstimationTool()
+        # Initialize tool
+        self.search_tool = QdrantSearchTool(rag_engine, document_resolver)
         
-        # Initialize agents
+        # Initialize CrewAI agents
         self._setup_agents()
-        
+    
     def _setup_agents(self):
-        """Set up the CrewAI agents for agentic RAG."""
+        """Set up CrewAI agents for agentic RAG."""
         
-        # Research Analyst Agent - understands queries and plans search strategies
-        self.research_analyst = Agent(
-            role="Research Analyst",
-            goal="Understand research queries and develop comprehensive search strategies",
-            backstory="""You are an expert research analyst specializing in academic literature.
-            Your expertise lies in understanding complex research questions, identifying key concepts,
-            and developing multi-faceted search strategies to ensure comprehensive literature coverage.
-            You excel at breaking down complex queries into searchable components.""",
-            tools=[self.query_analysis_tool],
-            verbose=True,
-            llm=self._get_agent_llm()
-        )
-        
-        # Limit Estimation Agent - intelligently determines optimal document limits
+        # Limit Estimation Agent - estimates optimal document count or extracts from query
         self.limit_estimation_agent = Agent(
-            role="Limit Estimation Specialist",
-            goal="Intelligently determine optimal document limits based on query complexity and research scope",
-            backstory="""You are a specialist in information retrieval optimization who understands
-            how query characteristics should influence the number of documents retrieved. You analyze
-            query complexity, research scope, and user intent to recommend optimal document limits
-            that balance comprehensiveness with relevance. You consider factors like query breadth,
-            technical depth, comparative requirements, and temporal scope to make intelligent
-            recommendations about how many sources are needed for effective research.""",
-            tools=[self.limit_estimation_tool],
+            role="Search Limit Estimator",
+            goal="Determine the optimal number of documents needed - either from explicit query mention or by analyzing complexity",
+            backstory="""You are an expert at analyzing research queries to determine how many 
+            documents should be retrieved. 
+            
+            FIRST, check if the query explicitly mentions a number of documents (e.g., "retrieve 15 items", 
+            "find 20 papers", "get 10 documents", "show me 5 articles"). If found, use that number.
+            
+            If NO explicit number is mentioned, estimate based on query complexity:
+            - Query complexity and scope (broad vs. specific)
+            - Research requirements (comparative, comprehensive, focused)
+            - Technical depth and domain coverage needed
+            
+            Guidelines for estimation:
+            - Broad queries (reviews, surveys, comparisons): 15-50 documents
+            - Moderate queries (specific topics with multiple aspects): 8-15 documents
+            - Focused queries (single concept, specific paper): 3-8 documents
+            
+            You provide estimates between {MIN_LIMIT} and {MAX_LIMIT} documents with reasoning.""",
+            tools=[],  # No tools - uses LLM analysis only
             verbose=True,
-            llm=self._get_agent_llm()
+            llm=self.agentic_llm.model_name
         )
         
-        # Search Specialist Agent - executes multiple search strategies
-        self.search_specialist = Agent(
-            role="Search Specialist",
-            goal="Execute multiple search strategies to retrieve relevant academic documents",
-            backstory="""You are a search specialist with deep expertise in information retrieval.
-            You understand the strengths and weaknesses of different search approaches including
-            semantic search, keyword-based search, and hybrid methods. You can adapt your search
-            strategy based on the type of query and the expected results.""",
-            tools=[self.rag_search_tool],
+        # Search Agent - uses Qdrant search tool
+        self.search_agent = Agent(
+            role="Document Search Specialist",
+            goal="Search for relevant academic documents in the Qdrant database",
+            backstory="""You are an expert at searching academic databases. You use the Qdrant 
+            search tool to find documents based on queries. You understand how to formulate 
+            effective search queries and retrieve comprehensive results. You work with the 
+            limit estimator to determine how many documents to search for.""",
+            tools=[self.search_tool],
             verbose=True,
-            llm=self._get_agent_llm()
+            llm=self.agentic_llm.model_name,
+            output_json=True,  # Output JSON for processing
         )
         
-        # Relevance Check Agent - evaluates document relevance and decides on next steps
+        # Relevance Evaluator Agent - uses answers_llm for consistency
         self.relevance_agent = Agent(
             role="Relevance Evaluator",
-            goal="Evaluate document relevance, remove irrelevant items, and decide on search continuation",
-            backstory="""You are an expert in evaluating the relevance of academic documents to research queries.
-            You can analyze document content to determine how well it matches the research question,
-            identify irrelevant documents, and make informed decisions about whether to continue searching
-            or if sufficient relevant documents have been found. You can also suggest query refinements
-            to improve search results when needed.""",
-            tools=[],  # No tools - will use LLM directly
+            goal="Evaluate document relevance and filter out irrelevant results",
+            backstory="""You are an expert at evaluating the relevance of academic documents 
+            to research queries. You analyze document titles, abstracts, and metadata to 
+            determine if they truly address the user's research question. You provide 
+            relevance scores and decide which documents should be included.""",
+            tools=[],  # No tools - uses LLM only
             verbose=True,
-            llm=self._get_agent_llm()
+            llm=self.answers_llm.model_name
         )
         
-        # Synthesis Agent - combines and evaluates results
-        self.synthesis_agent = Agent(
-            role="Research Synthesizer",
-            goal="Synthesize and evaluate search results to provide comprehensive insights",
-            backstory="""You are a research synthesizer who excels at combining information
-            from multiple sources and search strategies. You can identify the most relevant
-            documents, detect overlaps and gaps, and provide quality assessments of the
-            retrieved literature. Your expertise helps ensure the final results are 
-            comprehensive and relevant.""",
-            tools=[],
+        # Supervisor Agent - orchestrates the process
+        self.supervisor_agent = Agent(
+            role="Research Supervisor",
+            goal="Coordinate iterative search and ensure high-quality relevant results",
+            backstory="""You are a research supervisor who coordinates the search process. 
+            You work with the limit estimator to determine document needs, direct the search 
+            specialist, work with the relevance evaluator, and decide when sufficient relevant 
+            documents have been found. You can request refined searches if needed.""",
+            tools=[],  # No tools - coordinates other agents
             verbose=True,
-            llm=self._get_agent_llm()
+            llm=self.agentic_llm.model_name
         )
     
-    def _get_agent_llm(self):
-        """Get LLM configuration for agents."""
-        # Use the existing LLM client configuration
-        return self.llm_client.model_name
-    
-    def _check_relevance_with_llm(self, query: str, documents: List[Dict], 
-                                 current_limit: int, relevant_count: int = 0, 
-                                 iteration: int = 1) -> RelevanceCheckResult:
+    def agentic_search(self, query: str, limit: Optional[int] = None,
+                      max_iterations: int = 3) -> Dict[str, Any]:
         """
-        Check document relevance using LLM directly without tools.
+        Perform iterative agentic search with relevance filtering using CrewAI.
+        
+        Implements a cycle between Search and Relevance agents that:
+        - Searches for documents
+        - Evaluates relevance and keeps relevant ones
+        - Continues searching until target reached or max iterations hit
+        - Stops if new search returns only irrelevant documents
         
         Args:
-            query: The research query
-            documents: List of documents to evaluate
-            current_limit: Target number of documents
-            relevant_count: Number of relevant documents already found
-            iteration: Current iteration number
+            query: Search query
+            limit: Optional manual limit override
+            max_iterations: Maximum search iterations (default: 3)
             
         Returns:
-            RelevanceCheckResult with evaluation results
+            Dictionary with documents and metadata
         """
         try:
-            # Format documents for LLM analysis
+            print(f"\n{'='*60}")
+            print(f"Starting CrewAI iterative agentic search for: '{query}'")
+            print(f"{'='*60}\n")
+            
+            # Step 1: Estimate document limit (or extract from query)
+            if limit is not None:
+                target_limit = limit
+                print(f"Using manual limit: {target_limit}")
+            else:
+                target_limit = self._estimate_limit_with_agent(query)
+                print(f"Estimated target limit: {target_limit}")
+            
+            # Step 2: Iterative search-relevance cycle
+            all_relevant_docs = []
+            seen_keys = set()
+            current_query = query
+            
+            for iteration in range(1, max_iterations + 1):
+                print(f"\n{'='*60}")
+                print(f"Iteration {iteration}/{max_iterations}")
+                print(f"Relevant docs so far: {len(all_relevant_docs)}/{target_limit}")
+                print(f"{'='*60}\n")
+                
+                # Check if we have enough documents
+                if len(all_relevant_docs) >= target_limit:
+                    print("✓ Target limit reached!")
+                    break
+                
+                # Search for documents
+                search_limit = min((target_limit - len(all_relevant_docs)) * 2 + 5, MAX_LIMIT)
+                print(f"Searching for {search_limit} documents with query: '{current_query}'")
+                
+                search_results = self._search_with_agent(current_query, search_limit)
+                
+                if not search_results:
+                    print("✗ No documents found in this iteration")
+                    break
+                
+                # Filter out already seen documents
+                new_docs = [doc for doc in search_results 
+                           if doc.get("zotero_key") not in seen_keys]
+                
+                if not new_docs:
+                    print("✗ No new documents found (all already seen)")
+                    break
+                
+                print(f"Found {len(new_docs)} new documents")
+                
+                # Evaluate relevance
+                eval_result = self._evaluate_relevance_with_agent(
+                    query=query,
+                    documents=new_docs,
+                    target_limit=target_limit,
+                    current_relevant_count=len(all_relevant_docs)
+                )
+                
+                relevant_docs = eval_result.get("relevant_documents", [])
+                irrelevant_docs = eval_result.get("irrelevant_documents", [])
+                
+                print(f"Relevant: {len(relevant_docs)}, Irrelevant: {len(irrelevant_docs)}")
+                
+                # Stop if no relevant documents found in this iteration
+                if not relevant_docs:
+                    print("✗ No relevant documents found in this iteration, stopping")
+                    # But don't break immediately - check if we have enough documents overall
+                    if len(all_relevant_docs) >= target_limit:
+                        break
+                    # If we still need more documents, continue to next iteration to try different search strategy
+                    if len(all_relevant_docs) < target_limit and iteration < max_iterations:
+                        continue
+                    else:
+                        break
+                
+                # Add relevant documents
+                for doc in relevant_docs:
+                    zotero_key = doc.get("zotero_key")
+                    if zotero_key and zotero_key not in seen_keys:
+                        all_relevant_docs.append(doc)
+                        seen_keys.add(zotero_key)
+                
+                # Mark all processed documents as seen
+                for doc in new_docs:
+                    if doc.get("zotero_key"):
+                        seen_keys.add(doc.get("zotero_key"))
+                
+                # Check if we need more iterations
+                if len(all_relevant_docs) >= target_limit:
+                    print("✓ Target limit reached!")
+                    break
+                
+                # Refine query for next iteration if suggested
+                refined_query = eval_result.get("refined_query")
+                if refined_query and iteration < max_iterations:
+                    current_query = refined_query
+                    print(f"→ Refining query for next iteration: '{current_query}'")
+                elif iteration < max_iterations:
+                    print("→ No query refinement suggested, continuing with same query")
+            
+            # Step 3: Finalize results
+            final_docs = self._finalize_with_supervisor(
+                all_relevant_docs=all_relevant_docs,
+                target_limit=target_limit,
+                query=query
+            )
+            
+            print(f"\n{'='*60}")
+            print(f"Search complete: {len(final_docs)} relevant documents")
+            print(f"{'='*60}\n")
+            
+            return {
+                "documents": final_docs,
+                "query": query,
+                "total_found": len(final_docs),
+                "success": True,
+                "iterations_used": iteration
+            }
+            
+        except Exception as e:
+            print(f"Agentic search failed: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Fallback to standard search
+            try:
+                fallback_docs = self.rag_engine.search_documents(query, limit=limit or 5)
+                return {
+                    "documents": fallback_docs,
+                    "query": query,
+                    "total_found": len(fallback_docs),
+                    "success": False,
+                    "error": str(e),
+                    "fallback_used": True
+                }
+            except Exception as fallback_error:
+                return {
+                    "documents": [],
+                    "query": query,
+                    "total_found": 0,
+                    "success": False,
+                    "error": f"Agentic: {e}, Fallback: {fallback_error}"
+                }
+    
+    def unified_agentic_search(self, query: str, limit: Optional[int] = None,
+                              max_iterations: int = 3) -> Dict[str, Any]:
+        """
+        Perform agentic search using a single unified Crew with all agents working together.
+        
+        This method creates a single Crew with all agents and a unified task that handles
+        the entire agentic RAG process in one go, making it more efficient and easier to call
+        from main.py.
+        
+        Args:
+            query: Search query
+            limit: Optional manual limit override
+            max_iterations: Maximum search iterations (default: 3)
+            
+        Returns:
+            Dictionary with documents and metadata
+        """
+        try:
+            print(f"\n{'='*60}")
+            print(f"Starting unified CrewAI agentic search for: '{query}'")
+            print(f"{'='*60}\n")
+            
+            # Step 1: Estimate document limit (or extract from query)
+            if limit is not None:
+                target_limit = limit
+                print(f"Using manual limit: {target_limit}")
+            else:
+                target_limit = self._estimate_limit_with_agent(query)
+                print(f"Estimated target limit: {target_limit}")
+            
+            # Step 2: Create a unified task that orchestrates the entire process
+            unified_task = Task(
+                description=f"""Perform a comprehensive agentic RAG search to find relevant academic documents for the query: "{query}"
+                
+                Follow these steps:
+                1. FIRST, estimate the optimal number of documents needed (already done: {target_limit})
+                2. Search for academic documents using the qdrant_search tool
+                3. Evaluate document relevance using your expertise
+                4. Continue searching iteratively if needed (up to {max_iterations} iterations)
+                5. Return only the most relevant documents (target: {target_limit})
+                
+                Search Strategy:
+                - Start with the original query: "{query}"
+                - For subsequent iterations, refine the query based on relevance feedback
+                - Search for more documents than needed to ensure quality filtering
+                - Deduplicate documents across iterations
+                - Stop when you have enough relevant documents or reach max iterations
+                
+                Relevance Evaluation Criteria:
+                - Direct relevance to the research query
+                - Quality of the research (peer-reviewed sources preferred)
+                - Recency of publication (unless historical context is needed)
+                - Comprehensiveness of coverage
+                
+                For each document, provide:
+                1. Relevance assessment (highly relevant, somewhat relevant, not relevant)
+                2. Brief reasoning for the assessment
+                3. Relevance score (0.0-1.0)
+                
+                Final Output Requirements:
+                Return a JSON object with this structure:
+                {{
+                  "documents": [list of relevant documents with full metadata and relevance scores],
+                  "query": "{query}",
+                  "total_found": <number of relevant documents>,
+                  "iterations_used": <number of search iterations performed>,
+                  "search_strategy": "brief description of the search approach used"
+                }}
+                
+                Ensure that only highly relevant documents (relevance score > 0.5) are included in the final results.
+                """,
+                agent=self.supervisor_agent,
+                expected_output="JSON with list of relevant documents and metadata",
+                output_json=UnifiedSearchResult
+            )
+            
+            # Step 3: Create a unified Crew with all agents
+            unified_crew = Crew(
+                agents=[
+                    self.limit_estimation_agent,
+                    self.search_agent,
+                    self.relevance_agent,
+                    self.supervisor_agent
+                ],
+                tasks=[unified_task],
+                process=Process.sequential,
+                verbose=True
+            )
+            
+            # Step 4: Execute the unified Crew
+            result = unified_crew.kickoff()
+            
+            # Step 5: Process and return results
+            try:
+                # Handle Pydantic model output
+                if hasattr(result, 'dict'):
+                    # If result is a Pydantic model, convert to dict
+                    result_data = result.dict()
+                elif hasattr(result, 'json'):
+                    # If result has json method, use it
+                    result_data = result.json()
+                    if isinstance(result_data, str):
+                        result_data = json.loads(result_data)
+                else:
+                    # Try to parse as JSON string
+                    result_data = json.loads(str(result))
+                
+                # Handle both dict and Pydantic model outputs
+                if isinstance(result_data, dict):
+                    documents = result_data.get("documents", [])
+                    total_found = result_data.get("total_found", len(documents))
+                    iterations_used = result_data.get("iterations_used", 1)
+                    search_strategy = result_data.get("search_strategy", "unified agentic search")
+                    
+                    print(f"\n{'='*60}")
+                    print(f"Unified search complete: {total_found} relevant documents")
+                    print(f"Iterations used: {iterations_used}")
+                    print(f"Search strategy: {search_strategy}")
+                    print(f"{'='*60}\n")
+                    
+                    return {
+                        "documents": documents,
+                        "query": query,
+                        "total_found": total_found,
+                        "success": True,
+                        "iterations_used": iterations_used,
+                        "search_strategy": search_strategy
+                    }
+                elif hasattr(result_data, 'documents'):
+                    # If it's a Pydantic model instance
+                    documents = result_data.documents
+                    total_found = result_data.total_found
+                    iterations_used = result_data.iterations_used
+                    search_strategy = result_data.search_strategy
+                    
+                    print(f"\n{'='*60}")
+                    print(f"Unified search complete: {total_found} relevant documents")
+                    print(f"Iterations used: {iterations_used}")
+                    print(f"Search strategy: {search_strategy}")
+                    print(f"{'='*60}\n")
+                    
+                    return {
+                        "documents": documents,
+                        "query": query,
+                        "total_found": total_found,
+                        "success": True,
+                        "iterations_used": iterations_used,
+                        "search_strategy": search_strategy
+                    }
+            except (json.JSONDecodeError, AttributeError):
+                # If JSON parsing fails, return the raw result
+                print(f"\n{'='*60}")
+                print("Unified search completed with raw result")
+                print(f"{'='*60}\n")
+                
+                return {
+                    "documents": [],
+                    "query": query,
+                    "total_found": 0,
+                    "success": False,
+                    "raw_result": str(result),
+                    "error": "Could not parse result as JSON"
+                }
+            
+        except Exception as e:
+            print(f"Unified agentic search failed: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Fallback to standard search
+            try:
+                fallback_docs = self.rag_engine.search_documents(query, limit=limit or 5)
+                return {
+                    "documents": fallback_docs,
+                    "query": query,
+                    "total_found": len(fallback_docs),
+                    "success": False,
+                    "error": str(e),
+                    "fallback_used": True
+                }
+            except Exception as fallback_error:
+                return {
+                    "documents": [],
+                    "query": query,
+                    "total_found": 0,
+                    "success": False,
+                    "error": f"Agentic: {e}, Fallback: {fallback_error}"
+                }
+
+    def _estimate_limit_with_agent(self, query: str) -> int:
+        """Use limit estimation agent to determine optimal document count."""
+        try:
+            task = Task(
+                description=f"""Analyze this research query and determine the optimal number of documents needed:
+                
+                Query: "{query}"
+                
+                STEP 1: Check if the query explicitly mentions a number of documents
+                Look for phrases like: "retrieve X items", "find X papers", "get X documents", "show me X articles", 
+                "X papers about", "top X results", etc.
+                
+                If explicit number found: Use that number (ensure it's between {MIN_LIMIT} and {MAX_LIMIT})
+                
+                STEP 2: If NO explicit number, estimate based on query complexity
+                
+                Return JSON with:
+                {{
+                  "estimated_limit": <number between {MIN_LIMIT} and {MAX_LIMIT}>,
+                  "source": "explicit" or "estimated",
+                  "reasoning": "brief explanation"
+                }}""",
+                agent=self.limit_estimation_agent,
+                expected_output="JSON with document limit"
+            )
+            
+            crew = Crew(
+                agents=[self.limit_estimation_agent],
+                tasks=[task],
+                process=Process.sequential,
+                verbose=False
+            )
+            
+            result = crew.kickoff()
+            result_str = str(result)
+            
+            # Extract JSON using a more robust approach
+            start_match = re.search(r'\{\s*"estimated_limit"', result_str)
+            if start_match:
+                # Find the matching closing brace
+                start_pos = start_match.start()
+                brace_count = 0
+                pos = start_pos
+                json_str = None
+                
+                while pos < len(result_str):
+                    if result_str[pos] == '{':
+                        brace_count += 1
+                    elif result_str[pos] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            # Found the matching closing brace
+                            json_str = result_str[start_pos:pos+1]
+                            break
+                    pos += 1
+                
+                if json_str:
+                    try:
+                        parsed = json.loads(json_str)
+                        limit = parsed.get("estimated_limit", 10)
+                        source = parsed.get("source", "estimated")
+                        reasoning = parsed.get("reasoning", "")
+                        print(f"Limit {source}: {limit} - {reasoning}")
+                        return max(MIN_LIMIT, min(MAX_LIMIT, limit))
+                    except json.JSONDecodeError as e:
+                        print(f"JSON parsing failed for limit estimation: {e}")
+            
+            return 10  # Default fallback
+            
+        except Exception as e:
+            print(f"Limit estimation failed: {e}, using default 10")
+            return 10
+    
+    def _search_with_agent(self, query: str, limit: int) -> List[Dict]:
+        """Use search agent to find documents."""
+        try:
+            task = Task(
+                description=f"""Search for academic documents related to this query: "{query}"
+                
+                Use the qdrant_search tool to find {limit} documents.
+                
+                Return the search results in JSON format.""",
+                agent=self.search_agent,
+                expected_output="JSON with list of documents",
+                output_json=SearchResultsModel
+            )
+            
+            crew = Crew(
+                agents=[self.search_agent],
+                tasks=[task],
+                process=Process.sequential,
+                verbose=False
+            )
+            
+            result = crew.kickoff()
+            # Try to obtain a dict from the result object safely
+            result_json = {}
+            if hasattr(result, "json"):
+                try:
+                    r = result.json_dict
+                    # result.json() might return a dict or a JSON string
+                    if isinstance(r, str):
+                        result_json = json.loads(r)
+                    elif isinstance(r, dict):
+                        result_json = r
+                    else:
+                        # If it's a Pydantic model, .dict() is available
+                        if hasattr(r, "dict"):
+                            result_json = r.dict()
+                except Exception as e:
+                    print(f"Error parsing search result JSON: {e}")
+                    result_json = {}
+            
+            # Also try to parse from string representation
+            if not result_json:
+                result_str = str(result)
+                json_match = re.search(r'\{.*"documents".*?\}', result_str, re.DOTALL)
+                if json_match:
+                    try:
+                        result_json = json.loads(json_match.group(0))
+                    except json.JSONDecodeError as e:
+                        print(f"Error parsing search result from string: {e}")
+                        result_json = {}
+            
+            if result_json:
+                docs = result_json.get("documents", [])
+                
+                return docs
+            
+            return []
+            
+        except Exception as e:
+            print(f"Search with agent failed: {e}")
+            return []
+    
+    def _evaluate_relevance_with_agent(self, query: str, documents: List[Dict],
+                                      target_limit: int, current_relevant_count: int) -> Dict[str, Any]:
+        """Use relevance agent to evaluate documents."""
+        try:
+            # Format documents for evaluation, preserving all metadata for mapping back
             formatted_docs = []
             for i, doc in enumerate(documents):
                 formatted_doc = {
                     "index": i,
                     "title": doc.get("title", ""),
-                    "abstract": doc.get("abstract", ""),
-                    "authors": doc.get("authors", []),
+                    "abstract": doc.get("abstract", "")[:500],
                     "year": doc.get("year", ""),
+                    "zotero_key": doc.get("zotero_key", "")
                 }
+                
                 formatted_docs.append(formatted_doc)
             
-            # Create prompt for relevance assessment
-            prompt = f"""
-            As a research relevance expert, analyze the following documents for relevance to the query: "{query}"
-            
-            Documents to evaluate:
-            {json.dumps(formatted_docs, indent=2)}
-            
-            Current search status:
-            - Target document count: {current_limit}
-            - Already found relevant documents: {relevant_count}
-            - Search iteration: {iteration}
-            
-            For each document, provide:
-            1. A relevance score from 0.0 (not relevant) to 1.0 (highly relevant)
-            2. Brief reasoning for the score
-            3. Whether to include or exclude the document
-            
-            Also provide:
-            1. Overall relevance assessment of the search results
-            2. Whether to continue searching for more documents
-            3. If continuing, suggest a refined query to improve results
-            4. If stopping, explain why sufficient relevant documents were found
-            
-            Respond in JSON format with this structure:
-            {{
-                "document_scores": [
-                    {{
-                        "index": 0,
-                        "relevance_score": 0.8,
-                        "reasoning": "Reason for score",
-                        "include": true
-                    }}
-                ],
-                "overall_relevance": 0.75,
-                "continue_search": false,
-                "refined_query": "Optional refined query if continuing",
-                "reasoning": "Overall assessment reasoning"
-            }}
-            """
-            
-            # Get LLM assessment
-            messages = [{"role": "user", "content": prompt}]
-            response = self.llm_client.ask_llm(messages)
-            
-            # Extract JSON from response
-            try:
-                result_data = json.loads(response)
-            except json.JSONDecodeError:
-                # Try to extract JSON from code blocks
-                import re
-                json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
-                if json_match:
-                    result_data = json.loads(json_match.group(1))
-                else:
-                    raise ValueError("Could not extract JSON from LLM response")
-            
-            # Process document scores and separate relevant/irrelevant documents
-            relevant_docs = []
-            irrelevant_docs = []
-            relevance_scores = {}
-            
-            for i, doc in enumerate(documents):
-                # Find the score for this document
-                doc_score = None
-                for score_info in result_data.get("document_scores", []):
-                    if score_info.get("index") == i:
-                        doc_score = score_info
-                        break
+            task = Task(
+                description=f"""Evaluate the relevance of these documents for query: "{query}"
                 
-                if doc_score and doc_score.get("include", False) and doc_score.get("relevance_score", 0) > 0.3:
-                    doc["relevance_score"] = doc_score["relevance_score"]
-                    relevant_docs.append(doc)
-                else:
-                    irrelevant_docs.append(doc)
+                Documents:
+                {json.dumps(formatted_docs, indent=2)}
                 
-                # Store relevance score
-                relevance_scores[doc.get("zotero_key", f"doc_{i}")] = doc_score.get("relevance_score", 0) if doc_score else 0
-            
-            # Create RelevanceCheckResult
-            return RelevanceCheckResult(
-                relevant_documents=relevant_docs,
-                irrelevant_documents=irrelevant_docs,
-                relevance_scores=relevance_scores,
-                overall_relevance=result_data.get("overall_relevance", 0.0),
-                needs_continuation=result_data.get("continue_search", False),
-                query_rewrite=result_data.get("refined_query")
+                Current status:
+                - Target: {target_limit} relevant documents
+                - Already found: {current_relevant_count} relevant documents
+                - Need: {max(0, target_limit - current_relevant_count)} more
+                
+                For each document:
+                1. Determine if it's relevant (true/false) in is_relevant field
+                2. Assign relevance score (0.0-1.0)
+                3. Provide brief reasoning
+                
+                Also determine if we need more search and suggest a refined query if needed.
+                
+                Return JSON with:
+                {{
+                  "relevant_documents": [list with is_relevant=true, relevance_score and relevance_reason],
+                  "irrelevant_documents": [list with is_relevant=false],
+                  "needs_more_search": boolean,
+                  "refined_query": "optional refined query"
+                }}""",
+                agent=self.relevance_agent,
+                expected_output="JSON with relevance evaluation"
             )
             
-        except Exception as e:
-            # Return a default result in case of error
-            return RelevanceCheckResult(
-                relevant_documents=[],
-                irrelevant_documents=documents,
-                relevance_scores={},
-                overall_relevance=0.0,
-                needs_continuation=False,
-                query_rewrite=None
-            )
-    
-    def agentic_search(self, query: str, limit: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Perform agentic RAG search using CrewAI agents with intelligent limit estimation.
-        
-        Args:
-            query: The research query
-            limit: Maximum number of documents to return (if None, will be estimated by agent)
-            
-        Returns:
-            Dictionary containing search results and agent insights
-        """
-        try:
-            # First check if we have a manual override
-            if limit is not None:
-                final_limit = limit
-                limit_source = "manual_override"
-                print(f"Using manually specified limit: {limit} documents")
-            else:
-                # For agentic RAG, let the standard RAG check for user-requested limits first
-                rag_results_with_metadata = self.rag_engine.search_documents(
-                    query, limit=None, return_metadata=True
-                )
-                
-                if rag_results_with_metadata["limit_source"] == "user_request":
-                    # User explicitly requested a limit - honor it
-                    final_limit = rag_results_with_metadata["limit"]
-                    limit_source = "user_request"
-                    print(f"Using user-requested limit: {final_limit} documents")
-                else:
-                    # No user request - use agent-based estimation
-                    limit_source = "agent_estimation"
-                    # Will be estimated by the agent below
-                    final_limit = None
-            
-            # Task 1: Query Analysis
-            analysis_task = Task(
-                description=f"""Analyze the following research query and provide insights:
-                Query: "{query}"
-                
-                Your analysis should include:
-                1. Key concepts and keywords
-                2. Query characteristics (technical terms, author names, years, etc.)
-                3. Recommended search strategies
-                4. Potential search challenges
-                
-                Use the query_analysis tool to perform the analysis.""",
-                agent=self.research_analyst,
-                expected_output="A detailed analysis of the query with recommended search strategies"
-            )
-            
-            # Task 2: Limit Estimation (only if not already determined)
-            if final_limit is None:
-                limit_estimation_task = Task(
-                    description=f"""Analyze the research query to determine the optimal number of documents needed:
-                    Query: "{query}"
-                    
-                    Consider:
-                    1. Query complexity and scope (broad vs. specific)
-                    2. Research requirements (comparative, comprehensive, focused)
-                    3. Technical depth and domain coverage needed
-                    4. Temporal scope (historical vs. current)
-                    
-                    Use the limit_estimation tool to analyze the query and recommend an appropriate document limit.
-                    Provide reasoning for your recommendation.""",
-                    agent=self.limit_estimation_agent,
-                    expected_output="An intelligent estimate of optimal document limit with detailed reasoning"
-                )
-            
-            # Task 3: Multi-strategy Search
-            search_task = Task(
-                description=f"""Based on the query analysis{' and limit estimation' if final_limit is None else ''}, execute multiple search strategies:
-                Original query: "{query}"
-                {'Target limit: To be determined by limit estimation agent' if final_limit is None else f'Target limit: {final_limit} documents'}
-                Limit source: {limit_source}
-                
-                Execute the following searches:
-                1. Hybrid search (semantic + BM25)
-                2. Semantic-focused search if technical terms are present
-                3. Keyword-focused search if specific terms/names are present
-                
-                {f'The limit of {final_limit} was determined by {limit_source}:' if final_limit is not None else 'Use the limit recommended by the limit estimation agent:'}
-                {"→ User explicitly requested this number - honor their preference" if limit_source == "user_request" else 
-                 "→ Manually specified - use as provided" if limit_source == "manual_override" else 
-                 "→ Use the intelligent agent recommendation"}
-                
-                Use the rag_search tool for each strategy and compare results.""",
-                agent=self.search_specialist,
-                expected_output="Search results from multiple strategies with appropriate document limits"
-            )
-            
-            # Task 4: Result Synthesis
-            synthesis_task = Task(
-                description=f"""Synthesize the search results from multiple strategies:
-                
-                Your synthesis should include:
-                1. Combination of results from different strategies
-                2. Deduplication of overlapping documents
-                3. Ranking by relevance and quality
-                4. Identification of gaps or limitations
-                5. Final recommendation of optimal documents
-                
-                {'Use the limit determined by manual override' if limit_source == 'manual_override' else
-                 'Respect the user\'s explicit request for document count' if limit_source == 'user_request' else
-                 'Use the limit recommended by the limit estimation agent'}
-                
-                Ensure the final selection represents the most valuable sources for this specific research question.
-                Provide a comprehensive assessment of the retrieved literature.""",
-                agent=self.synthesis_agent,
-                expected_output="A synthesized list of the most relevant documents with quality assessment and selection rationale"
-            )
-            
-            # Create task list based on whether limit estimation is needed
-            if final_limit is None:
-                tasks = [analysis_task, limit_estimation_task, search_task, synthesis_task]
-                agents = [self.research_analyst, self.limit_estimation_agent, self.search_specialist, self.synthesis_agent]
-            else:
-                tasks = [analysis_task, search_task, synthesis_task]
-                agents = [self.research_analyst, self.search_specialist, self.synthesis_agent]
-            
-            # Create and execute the crew
             crew = Crew(
-                agents=agents,
-                tasks=tasks,
+                agents=[self.relevance_agent],
+                tasks=[task],
                 process=Process.sequential,
-                verbose=True
+                verbose=False
             )
             
-            # Execute the crew
             result = crew.kickoff()
+            result_str = str(result)
             
-            # Extract the final limit from limit estimation if it was used
-            if final_limit is None:
-                # Try to extract limit from the limit estimation task result
-                try:
-                    # This would need to be parsed from the agent's output
-                    # For now, use a default based on standard RAG
-                    final_limit = 8  # Reasonable default for agent-estimated scenarios
-                except:
-                    final_limit = 8
-            
-            # Also get standard RAG results for comparison
-            standard_results = self.rag_engine.search_documents(query, limit=final_limit)
-            
-            return {
-                "agentic_results": result,
-                "standard_results": standard_results,
-                "query": query,
-                "estimated_limit": final_limit,
-                "limit_source": limit_source,
-                "agents_used": [agent.role for agent in agents]
-            }
-            
-        except Exception as e:
-            # Fallback to standard RAG if agentic approach fails
-            print(f"Agentic RAG failed, falling back to standard RAG: {e}")
-            standard_results = self.rag_engine.search_documents(query, limit=limit or 5)
-            return {
-                "agentic_results": None,
-                "standard_results": standard_results,
-                "query": query,
-                "estimated_limit": limit or 5,
-                "limit_source": "fallback",
-                "error": str(e),
-                "fallback_used": True
-            }
-    
-    def iterative_agentic_search(self, query: str, limit: Optional[int] = None, 
-                                max_iterations: int = 3) -> Dict[str, Any]:
-        """
-        Perform iterative agentic RAG search with relevance checking and refinement.
-        
-        Args:
-            query: The research query
-            limit: Maximum number of documents to return
-            max_iterations: Maximum number of search iterations to perform
-            
-        Returns:
-            Dictionary containing search results and agent insights
-        """
-        try:
-            # Determine the final limit
-            if limit is not None:
-                final_limit = limit
-                limit_source = "manual_override"
-            else:
-                # For agentic RAG, let the standard RAG check for user-requested limits first
-                rag_results_with_metadata = self.rag_engine.search_documents(
-                    query, limit=None, return_metadata=True
-                )
+            # Extract JSON using a more robust approach
+            start_match = re.search(r'\{\s*"relevant_documents"', result_str)
+            if start_match:
+                # Find the matching closing brace
+                start_pos = start_match.start()
+                brace_count = 0
+                pos = start_pos
+                json_str = None
                 
-                if rag_results_with_metadata["limit_source"] == "user_request":
-                    # User explicitly requested a limit - honor it
-                    final_limit = rag_results_with_metadata["limit"]
-                    limit_source = "user_request"
-                else:
-                    # Use intelligent estimation
-                    final_limit = self._estimate_limit(query)
-                    limit_source = "intelligent_estimation"
-            
-            print(f"Starting iterative agentic search for '{query}' with target of {final_limit} documents")
-            
-            # Track search progress
-            all_documents = []
-            relevant_documents = []
-            irrelevant_documents = []
-            iteration = 1
-            current_query = query
-            continue_search = True
-            
-            while continue_search and iteration <= max_iterations and len(relevant_documents) < final_limit:
-                print(f"Search iteration {iteration}")
+                while pos < len(result_str):
+                    if result_str[pos] == '{':
+                        brace_count += 1
+                    elif result_str[pos] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            # Found the matching closing brace
+                            json_str = result_str[start_pos:pos+1]
+                            break
+                    pos += 1
                 
-                # Execute search with current query
-                search_results = self.rag_engine.search_documents(current_query, limit=final_limit * 2)
-                
-                if not search_results:
-                    print("No documents found in this iteration")
-                    break
-                
-                # Combine with previous results to avoid duplicates
-                combined_documents = self._combine_documents(all_documents, search_results)
-                
-                # Remove previously identified irrelevant documents from combined_documents
-                if irrelevant_documents:
-                    irrelevant_keys = {doc.get("zotero_key") for doc in irrelevant_documents if doc.get("zotero_key")}
-                    combined_documents = [doc for doc in combined_documents if doc.get("zotero_key") not in irrelevant_keys]
-                    print(f"Removed {len(irrelevant_keys)} previously identified irrelevant documents from current search")
-                
-                # Remove previously identified relevant documents from combined_documents when asking LLM
-                # (but keep them in the final context)
-                documents_for_llm_check = combined_documents
-                if relevant_documents:
-                    relevant_keys = {doc.get("zotero_key") for doc in relevant_documents if doc.get("zotero_key")}
-                    documents_for_llm_check = [doc for doc in combined_documents if doc.get("zotero_key") not in relevant_keys]
-                    print(f"Excluding {len(relevant_keys)} previously identified relevant documents from LLM relevance check")
-                
-                # Check relevance of documents using LLM directly (no tools)
-                relevance_result = self._check_relevance_with_llm(
-                    query=current_query,
-                    documents=documents_for_llm_check,
-                    current_limit=final_limit,
-                    relevant_count=len(relevant_documents),
-                    iteration=iteration
-                )
-                
-                # Add relevant documents to our collection
-                relevant_documents.extend(relevance_result.relevant_documents)
-                all_documents = combined_documents
-                
-                print(f"Found {len(relevance_result.relevant_documents)} relevant documents in iteration {iteration}")
-                print(f"Total relevant documents: {len(relevant_documents)}")
-                
-                # Check if we should continue
-                continue_search = (
-                    relevance_result.needs_continuation and 
-                    len(relevant_documents) < final_limit and
-                    iteration < max_iterations
-                )
-                
-                # Update query if a refinement was suggested
-                if continue_search and relevance_result.query_rewrite:
-                    current_query = relevance_result.query_rewrite
-                    print(f"Refining query to: '{current_query}'")
-                
-                iteration += 1
-            
-            # Return top relevant documents up to the limit
-            final_documents = sorted(relevant_documents, 
-                                   key=lambda x: x.get("relevance_score", 0), 
-                                   reverse=True)[:final_limit]
-            
-            return {
-                "documents": final_documents,
-                "total_relevant_found": len(relevant_documents),
-                "iterations_performed": iteration - 1,
-                "final_query": current_query,
-                "query": query,
-                "estimated_limit": final_limit,
-                "limit_source": limit_source
-            }
-            
-        except Exception as e:
-            print(f"Iterative agentic RAG failed: {e}")
-            # Fallback to standard agentic search
-            return self.agentic_search(query, limit)
-    
-    def _estimate_limit(self, query: str, base_limit: int = 5) -> int:
-        """Estimate document limit (simplified version of LimitEstimationTool)."""
-        # Use the RAG engine's estimation method
-        return self.rag_engine._estimate_optimal_limit(query, base_limit)
-    
-    def _combine_documents(self, existing_docs: List[Dict], new_docs: List[Dict]) -> List[Dict]:
-        """Combine document lists, removing duplicates and resolving Zotero keys to full metadata."""
-        combined = existing_docs.copy()
-        existing_keys = {doc.get("zotero_key") for doc in existing_docs if doc.get("zotero_key")}
-        
-        for doc in new_docs:
-            zotero_key = doc.get("zotero_key")
-            if zotero_key and zotero_key not in existing_keys:
-                # Resolve Zotero key to full document metadata if resolver is available
-                if self.document_resolver and zotero_key:
+                if json_str:
                     try:
-                        full_doc = self.document_resolver(zotero_key)
-                        if full_doc:
-                            # Merge the RAG result with full document info
-                            enriched_doc = full_doc.copy()
-                            enriched_doc.update(doc)  # RAG results take precedence for score, etc.
-                            combined.append(enriched_doc)
-                        else:
-                            # If resolver fails, add the original document
-                            combined.append(doc)
-                    except Exception:
-                        # If resolver fails, add the original document
-                        combined.append(doc)
-                else:
-                    combined.append(doc)
-                existing_keys.add(zotero_key)
-        
-        return combined
-    
-    def get_agent_insights(self, query: str) -> Dict[str, Any]:
-        """
-        Get insights from the research analyst without performing full search.
-        
-        Args:
-            query: The research query to analyze
+                        parsed = json.loads(json_str)
+                        
+                        # Map back to original documents
+                        relevant_docs = []
+                        irrelevant_docs = []
+                        
+                        # Process relevant documents
+                        for eval_doc in parsed.get("relevant_documents", []):
+                            idx = eval_doc.get("index")
+                            if idx is not None and 0 <= idx < len(documents):
+                                # Check if the document is actually marked as relevant
+                                is_relevant = eval_doc.get("is_relevant", False)
+                                if is_relevant:
+                                    # Preserve all original document metadata and add relevance information
+                                    doc = documents[idx].copy()
+                                    doc["relevance_score"] = eval_doc.get("relevance_score", 0.5)
+                                    doc["relevance_reason"] = eval_doc.get("relevance_reason", "")
+                                    doc["is_relevant"] = True
+                                    relevant_docs.append(doc)
+                        
+                        # Process irrelevant documents
+                        for eval_doc in parsed.get("irrelevant_documents", []):
+                            idx = eval_doc.get("index")
+                            if idx is not None and 0 <= idx < len(documents):
+                                # Check if the document is actually marked as irrelevant
+                                is_relevant = eval_doc.get("is_relevant", True)
+                                if not is_relevant:
+                                    # Preserve all original document metadata and mark as irrelevant
+                                    doc = documents[idx].copy()
+                                    doc["is_relevant"] = False
+                                    irrelevant_docs.append(doc)
+
+                        return {
+                            "relevant_documents": relevant_docs,
+                            "irrelevant_documents": irrelevant_docs,
+                            "needs_more_search": parsed.get("needs_more_search", False),
+                            "refined_query": parsed.get("refined_query")
+                        }
+                    except json.JSONDecodeError as e:
+                        print(f"JSON parsing failed: {e}")
             
-        Returns:
-            Dictionary containing query analysis and recommendations
-        """
-        try:
-            analysis_task = Task(
-                description=f"""Provide a detailed analysis of this research query:
-                Query: "{query}"
-                
-                Include:
-                1. Key research concepts
-                2. Suggested search approaches
-                3. Potential challenges
-                4. Recommendations for refinement
-                
-                Use the query_analysis tool.""",
-                agent=self.research_analyst,
-                expected_output="Comprehensive query analysis with actionable insights"
-            )
-            
-            crew = Crew(
-                agents=[self.research_analyst],
-                tasks=[analysis_task],
-                verbose=True
-            )
-            
-            result = crew.kickoff()
+            # Fallback: return all as potentially relevant
             return {
-                "analysis": result,
-                "query": query,
-                "agent_used": "research_analyst"
+                "relevant_documents": documents,
+                "irrelevant_documents": [],
+                "needs_more_search": current_relevant_count + len(documents) < target_limit,
+                "refined_query": None
             }
             
         except Exception as e:
+            print(f"Relevance evaluation failed: {e}")
             return {
-                "analysis": None,
-                "query": query,
-                "error": str(e)
+                "relevant_documents": documents,
+                "irrelevant_documents": [],
+                "needs_more_search": False,
+                "refined_query": None
             }
+    
+    def _finalize_with_supervisor(self, all_relevant_docs: List[Dict],
+                                  target_limit: int, query: str) -> List[Dict]:
+        """Use supervisor agent to finalize and rank results."""
+        try:
+            # Sort by relevance score
+            sorted_docs = sorted(all_relevant_docs,
+                               key=lambda x: x.get("relevance_score", 0),
+                               reverse=True)
+            
+            # Return top N documents
+            return sorted_docs[:target_limit]
+            
+        except Exception as e:
+            print(f"Finalization failed: {e}")
+            return all_relevant_docs[:target_limit]

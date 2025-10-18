@@ -81,7 +81,7 @@ then make a config of Grafana as mentioned in p.6 above.
 2. Run Qdrant and Grafana Docker images:
 
 ```bash
-docker run -d -p 6333:6333 -p 6334:6334 -v "./qdrant_storage:/qdrant/storage:z" qdrant/qdrant
+docker run -d -p 6333:6333 -p 6334:6334 -v "qdrant_storage:/qdrant/storage" qdrant/qdrant
 docker run -d -p 3000:3000 --name=grafana --volume "$PWD/grafana:/var/lib/grafana" grafana/grafana-enterprise
 ```
 

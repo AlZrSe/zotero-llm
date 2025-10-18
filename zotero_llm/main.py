@@ -73,8 +73,8 @@ class ResearchAssistant:
                 agent_llm = LLMClient(**agent_llm_config) if agent_llm_config else self.llm
                 self.agentic_rag = AgenticRAGEngine(
                     rag_engine=self.rag,
-                    llm_client=agent_llm,
-                    agent_llm_config=self.llm_config.get('agentic_rag', {})
+                    document_resolver=self.get_document_by_key,
+                    agent_llm_client=agent_llm
                 )
                 self.agentic_rag_enabled = True
                 self.debug_print("✅ Agentic RAG initialized successfully!")
@@ -355,8 +355,8 @@ class ResearchAssistant:
             usage.reset()
             self.debug_print(f"INFO: Processing agentic query: {message}")
             
-            # Use agentic RAG for enhanced search
-            agentic_results = self.agentic_rag.agentic_search(message)
+            # Use unified agentic RAG for enhanced search
+            agentic_results = self.agentic_rag.search(message)
             
             # Log the estimated limit for debugging
             estimated_limit = agentic_results.get('estimated_limit', 'unknown')
@@ -364,11 +364,15 @@ class ResearchAssistant:
             user_requested = agentic_results.get('user_requested_limit')
             
             if limit_source == 'user_request':
-                self.debug_print(f"INFO: Using user-requested limit: {estimated_limit} documents")
+                self.debug_print(f"INFO: Using user-requested limit: {user_requested} documents")
             elif limit_source == 'manual_override':
                 self.debug_print(f"INFO: Using manually specified limit: {estimated_limit} documents")
             else:
                 self.debug_print(f"INFO: Agentic RAG estimated optimal limit: {estimated_limit} documents")
+            
+            # Log accumulated irrelevant documents count
+            irrelevant_count = len(agentic_results.get('irrelevant_documents_accumulated', []))
+            self.debug_print(f"INFO: Accumulated {irrelevant_count} irrelevant documents during search")
             
             # Extract context from agentic results
             if agentic_results.get('fallback_used', False):
@@ -378,7 +382,7 @@ class ResearchAssistant:
             else:
                 self.debug_print("INFO: Agentic RAG completed successfully")
                 # Extract documents from agentic results
-                context = agentic_results.get('standard_results', [])
+                context = agentic_results.get('documents', [])
                 # For now, use standard query rewriting - could be enhanced with agent insights
                 query = self.llm.rewrite_query(message)
             
@@ -486,14 +490,22 @@ class ResearchAssistant:
             self.debug_print("INFO: Falling back to standard RAG")
             return self.process_query(message, history)
 
-    def process_query(self, message: str, history: Optional[List] = None) -> str:
+    def process_query(self, message: str, history: Optional[List] = None, rag_mode: str = "Standard RAG") -> str:
         """Process a research query and return analysis results."""
         try:
             usage.reset()
             self.debug_print(f"INFO: Rewriting query: {message}")
             query = self.llm.rewrite_query(message)
             self.debug_print(f"INFO: Processed query: {query}")
-            context = self.rag.search_documents(query)
+            
+            # Use either standard RAG or agentic RAG based on user selection
+            if rag_mode == "Agentic RAG" and self.agentic_rag_enabled and self.agentic_rag:
+                # Use agentic RAG search
+                agentic_results = self.agentic_rag.agentic_search(query)
+                context = agentic_results.get("documents", [])
+            else:
+                # Use standard RAG search
+                context = self.rag.search_documents(query)
             
             # Enrich context with full document information from cache
             enriched_context = []
@@ -513,7 +525,7 @@ class ResearchAssistant:
                     # Fallback to RAG result if no zotero_key
                     enriched_context.append(doc)
             
-            context = sorted(enriched_context, key=lambda x: x['year'])
+            context = sorted(enriched_context, key=lambda x: x.get('year', 0))
             analysis = self.llm.ask_question(query, context)
             
             # Log the interaction
@@ -527,7 +539,7 @@ class ResearchAssistant:
                 query=message,
                 processed_query=query,
                 response=analysis,
-                used_documents=[doc['doi'] for doc in context],
+                used_documents=[doc.get('doi', '') for doc in context if doc.get('doi')],
                 llm_model = self.llm.model_name,
                 llm_tokens_used = usage_summary['tokens_in'] + usage_summary['tokens_out'],
                 llm_cost = usage_summary['cost_estimate'],
@@ -646,11 +658,8 @@ class ResearchAssistant:
                     metrics_panel = gr.Markdown("")
 
                 # Define wrapper that returns answer + metrics based on selected mode
-                def process_query_and_metrics(message, history=None, rag_mode="Standard RAG"):
-                    if rag_mode == "Agentic RAG" and self.agentic_rag_enabled:
-                        answer = self.process_agentic_query(message, history)
-                    else:
-                        answer = self.process_query(message, history)
+                def process_query_and_metrics(message, history=None, rag_mode=None):
+                    answer = self.process_query(message, history, rag_mode)
                     return answer, self.get_latest_metrics_markdown()
                 
                 # Define mode change handler
@@ -670,22 +679,17 @@ class ResearchAssistant:
 
                 # Left: Chat interface
                 with left_col:
-                    # Create a wrapper function that captures the current RAG mode
-                    def chat_fn(message, history, rag_mode_val=None):
-                        # Get current RAG mode from the toggle
-                        current_mode = rag_mode_val if rag_mode_val is not None else "Standard RAG"
-                        return process_query_and_metrics(message, history, current_mode)
-                    
                     chat = gr.ChatInterface(
-                        fn=lambda message, history: process_query_and_metrics(
+                        fn=lambda message, history, rag_mode: process_query_and_metrics(
                             message, 
-                            history, 
-                            rag_mode_toggle.value if self.agentic_rag_enabled else "Standard RAG"
+                            history,
+                            rag_mode
                         ),
+                        additional_inputs=[rag_mode_toggle],
                         examples=[
-                            "What are the main themes in my library about machine learning?",
-                            "Summarize the recent papers about natural language processing.",
-                            "What are the key findings about deep learning architectures?"
+                            ["What are the main themes in my library about machine learning?"],
+                            ["Summarize the recent papers about natural language processing."],
+                            ["What are the key findings about deep learning architectures?"]
                         ],
                         title="Research Assistant Chat",
                         description="Ask questions about your Zotero library and get AI-powered insights.",

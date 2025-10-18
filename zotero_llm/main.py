@@ -73,9 +73,8 @@ class ResearchAssistant:
                 agent_llm = LLMClient(**agent_llm_config) if agent_llm_config else self.llm
                 self.agentic_rag = AgenticRAGEngine(
                     rag_engine=self.rag,
-                    agentic_llm_client=agent_llm,
-                    answers_llm_client=self.llm,
-                    document_resolver=self.get_document_by_key
+                    document_resolver=self.get_document_by_key,
+                    agent_llm_client=agent_llm
                 )
                 self.agentic_rag_enabled = True
                 self.debug_print("✅ Agentic RAG initialized successfully!")
@@ -357,7 +356,7 @@ class ResearchAssistant:
             self.debug_print(f"INFO: Processing agentic query: {message}")
             
             # Use unified agentic RAG for enhanced search
-            agentic_results = self.agentic_rag.unified_agentic_search(message, max_iterations=3)
+            agentic_results = self.agentic_rag.search(message)
             
             # Log the estimated limit for debugging
             estimated_limit = agentic_results.get('estimated_limit', 'unknown')
@@ -491,14 +490,22 @@ class ResearchAssistant:
             self.debug_print("INFO: Falling back to standard RAG")
             return self.process_query(message, history)
 
-    def process_query(self, message: str, history: Optional[List] = None) -> str:
+    def process_query(self, message: str, history: Optional[List] = None, rag_mode: str = "Standard RAG") -> str:
         """Process a research query and return analysis results."""
         try:
             usage.reset()
             self.debug_print(f"INFO: Rewriting query: {message}")
             query = self.llm.rewrite_query(message)
             self.debug_print(f"INFO: Processed query: {query}")
-            context = self.rag.search_documents(query)
+            
+            # Use either standard RAG or agentic RAG based on user selection
+            if rag_mode == "Agentic RAG" and self.agentic_rag_enabled and self.agentic_rag:
+                # Use agentic RAG search
+                agentic_results = self.agentic_rag.agentic_search(query)
+                context = agentic_results.get("documents", [])
+            else:
+                # Use standard RAG search
+                context = self.rag.search_documents(query)
             
             # Enrich context with full document information from cache
             enriched_context = []
@@ -518,7 +525,7 @@ class ResearchAssistant:
                     # Fallback to RAG result if no zotero_key
                     enriched_context.append(doc)
             
-            context = sorted(enriched_context, key=lambda x: x['year'])
+            context = sorted(enriched_context, key=lambda x: x.get('year', 0))
             analysis = self.llm.ask_question(query, context)
             
             # Log the interaction
@@ -532,7 +539,7 @@ class ResearchAssistant:
                 query=message,
                 processed_query=query,
                 response=analysis,
-                used_documents=[doc['doi'] for doc in context],
+                used_documents=[doc.get('doi', '') for doc in context if doc.get('doi')],
                 llm_model = self.llm.model_name,
                 llm_tokens_used = usage_summary['tokens_in'] + usage_summary['tokens_out'],
                 llm_cost = usage_summary['cost_estimate'],
@@ -652,10 +659,7 @@ class ResearchAssistant:
 
                 # Define wrapper that returns answer + metrics based on selected mode
                 def process_query_and_metrics(message, history=None, rag_mode=None):
-                    if rag_mode == "Agentic RAG" and self.agentic_rag_enabled:
-                        answer = self.process_agentic_query(message, history)
-                    else:
-                        answer = self.process_query(message, history)
+                    answer = self.process_query(message, history, rag_mode)
                     return answer, self.get_latest_metrics_markdown()
                 
                 # Define mode change handler

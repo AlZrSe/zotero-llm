@@ -108,13 +108,39 @@ class AgenticRAGEngine:
         agent_llm = self.agent_llm_client.model_name if self.agent_llm_client else None
         
         self.query_agent = Agent(
-            role="Research Query Processor",
-            goal="Process research queries and retrieve relevant documents from the Qdrant database",
-            backstory="""You are an expert research assistant that specializes in retrieving 
-            academic documents from a vector database. You understand research queries and 
-            can effectively search for relevant documents using semantic search techniques. 
-            You have access to a Qdrant search tool that allows you to query the database directly 
-            and retrieve full document metadata.""",
+            role="Intelligent Research Query Processor",
+            goal="Process research queries, estimate document needs, filter for relevance, and ensure sufficient high-quality results",
+            backstory="""You are an expert research assistant with advanced document retrieval capabilities.
+            
+            CRITICAL SEARCH RULES:
+            - STRICTLY preserve exact terms, abbreviations, and chemical formulas from the original query
+            - May expand abbreviations unless explicitly requested (e.g., search "ML" as "machine learning")
+            - Do NOT modify chemical formulas (e.g., "H2O", "CO2", "C6H12O6" must remain exact)
+            - Do NOT change technical terms or acronyms
+            - You have EXACTLY 3 database searches maximum - use them wisely
+            
+            Your responsibilities include:
+            1. ESTIMATE DOCUMENT COUNT: Analyze the query to determine how many documents are needed.
+               - Broad queries ("overview", "survey", "what are") need 8-15 documents
+               - Specific queries ("how does X work", specific method/technique) need 3-7 documents
+               - Comparative queries ("compare X and Y") need 5-10 documents
+               - IMPORTANT: When searching, use 3x the estimated count as the limit to account for irrelevant results
+            
+            2. ASSESS RELEVANCE: After retrieving documents, critically evaluate each by:
+               - Title relevance: Does the title match the query topic?
+               - Abstract relevance: Does the abstract address the query?
+               - Keywords relevance: Do keywords align with the query?
+               - Drop documents that are clearly irrelevant to the query
+            
+            3. ITERATIVE SEARCH (MAXIMUM 3 TOTAL SEARCHES):
+               - First search: Use original query with 3x estimated limit
+               - If relevant documents < estimated count and searches < 3:
+                 * Second search: Try slight variations with 3x estimated limit
+                 * Third search: Try broader formulation with 3x estimated limit
+               - STOP after 3 searches regardless of results
+            
+            You have access to a Qdrant search tool that retrieves documents with full metadata 
+            including title, abstract, keywords, authors, year, DOI, and relevance scores.""",
             tools=[self.qdrant_tool],
             verbose=True,
             llm=agent_llm
@@ -135,18 +161,52 @@ class AgenticRAGEngine:
         search_task = Task(
             description=f"""Process the following research query and retrieve relevant documents:
             Query: "{query}"
-            {"Limit: " + str(limit) if limit else "Use default limit estimation"}
+            {"Limit: " + str(limit) if limit else "Estimate the optimal number of documents needed"}
             
-            Your task is to:
-            1. Understand the research query
-            2. Use the qdrant_search tool to find relevant documents in the Qdrant database
-            3. Return the most relevant documents found with full metadata
+            Follow this workflow:
             
-            Use the qdrant_search tool with appropriate parameters to search for documents.
-            The tool will automatically resolve Zotero keys to full document metadata.
+            STEP 1 - ESTIMATE DOCUMENT COUNT:
+            - Analyze the query type and complexity
+            - Determine how many documents are needed (3-15 range)
+            - Consider: Is it broad/survey? Specific/technical? Comparative?
+            - Calculate search limit: estimated_count * 3 (to account for filtering)
+            
+            STEP 2 - INITIAL SEARCH:
+            - PRESERVE exact terms, abbreviations, and chemical formulas from the query
+            - Use qdrant_search tool with limit = estimated_count * 3
+            - Retrieve documents with full metadata
+            
+            STEP 3 - ASSESS RELEVANCE:
+            - For each document, evaluate:
+              * Title: Does it match the query topic?
+              * Abstract: Does it address the research question?
+              * Keywords: Are they aligned with the query?
+            - Identify and DROP clearly irrelevant documents
+            - Count how many relevant documents remain
+            
+            STEP 4 - ITERATIVE SEARCH (MAXIMUM 3 TOTAL SEARCHES):
+            - If relevant documents < estimated count AND total searches < 3:
+              * Rewrite the query (preserve exact terms/abbreviations/formulas)
+              * Perform additional search with limit = estimated_count * 3
+              * Assess new results for relevance
+              * Repeat once more if still insufficient (max 3 searches total)
+            - STOP after 3 searches regardless of results
+            
+            STEP 5 - RETURN RESULTS:
+            - Return only the relevant documents with full metadata
+            - Include a summary of your process (estimated count, searches performed, relevance filtering)
+            
+            The qdrant_search tool will automatically resolve Zotero keys to full document metadata.
             """,
             agent=self.query_agent,
-            expected_output="A list of relevant academic documents with full metadata in JSON format"
+            expected_output="""A JSON object containing:
+            - 'documents': List of relevant academic documents with full metadata
+            - 'estimated_count': Number of documents you estimated were needed
+            - 'searches_performed': Number of search iterations
+            - 'query_variations': List of query variations used
+            - 'relevance_summary': Brief summary of relevance filtering applied
+            - 'total_retrieved': Total documents retrieved before filtering
+            - 'total_relevant': Total relevant documents after filtering"""
         )
         
         # Create and execute the crew with a single agent

@@ -753,8 +753,6 @@ def main():
             server_port=7860,        # Default Gradio port
             share=False              # Create a public link
         )
-        if assistant.rag.is_upload_running():
-            assistant.rag.upload_task.join(timeout=0)
     except Exception as e:
         print(f"Error starting the application: {str(e)}")
 

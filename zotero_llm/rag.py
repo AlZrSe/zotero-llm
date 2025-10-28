@@ -3,8 +3,8 @@ from typing import List, Dict, Optional
 from itertools import batched
 from tqdm import tqdm
 import re
-import threading
-from queue import Queue
+import multiprocessing
+from queue import Empty
 from typing import Optional, Any
 from copy import deepcopy
 
@@ -45,7 +45,6 @@ MIN_LIMIT = 5   # Always get at least 3 documents
 MAX_LIMIT = 50  # Cap at 50 to avoid overwhelming results
 
 class RAGEngine:
-
     def __init__(self, collection_name: str,
                  server_url: str = "http://localhost:6333",
                  embedding_model: str = 'jinaai/jina-embeddings-v2-base-en',
@@ -58,8 +57,9 @@ class RAGEngine:
         self.collection_name = collection_name
         self.use_sentence_splitting = use_sentence_splitting
 
-        self.upload_queue = Queue()
-        self.upload_task = None
+        # Replace Queue with multiprocessing.Queue
+        self.upload_queue = multiprocessing.Queue()
+        self.upload_process = None
         self._start_upload_worker()
 
     def _create_client(self, server_url: str) -> Optional[QdrantClient]:
@@ -407,28 +407,34 @@ class RAGEngine:
         return False
 
     def _start_upload_worker(self) -> None:
-        """Start background worker thread for document uploads."""
-        def upload_worker():
+        """Start background worker process for document uploads."""
+        def upload_worker(queue):
             while True:
-                collection_name, documents, start_index = self.upload_queue.get()
                 try:
-                    if documents:
-                        self._upload_documents_internal(documents, collection_name, start_index)
-                except Exception as e:
-                    print(f"ERROR: Upload failed: {str(e)}")
-                finally:
-                    self.upload_queue.task_done()
+                    # Add timeout to allow process termination
+                    collection_name, documents, start_index = queue.get(timeout=1)
+                    try:
+                        if documents:
+                            self._upload_documents_internal(documents, collection_name, start_index)
+                    except Exception as e:
+                        print(f"ERROR: Upload failed: {str(e)}")
+                except Empty:
+                    continue
+                except EOFError:
+                    break
 
-        self.upload_task = threading.Thread(
-            target=upload_worker,
-            daemon=True
-        )
-        self.upload_task.start()
+        if self.upload_process is None or not self.upload_process.is_alive():
+            self.upload_process = multiprocessing.Process(
+                target=upload_worker,
+                args=(self.upload_queue,),
+                daemon=True
+            )
+            self.upload_process.start()
 
     def upload_documents(self, documents: List[Dict[str, Any]], 
                         collection_name: Optional[str] = None,
                         start_index: int = 0) -> None:
-        """Queue document upload to run in background."""
+        """Queue document upload to run in background process."""
         collection_name = collection_name or self.collection_name
         self.upload_queue.put((collection_name, documents, start_index))
 

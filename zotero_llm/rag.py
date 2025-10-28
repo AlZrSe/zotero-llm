@@ -3,6 +3,10 @@ from typing import List, Dict, Optional
 from itertools import batched
 from tqdm import tqdm
 import re
+import threading
+from queue import Queue
+from typing import Optional, Any
+from copy import deepcopy
 
 # Try to import NLTK for better sentence splitting, fallback to regex if not available
 HAS_NLTK = False
@@ -53,6 +57,10 @@ class RAGEngine:
         self.embedding_model_size = embedding_model_size
         self.collection_name = collection_name
         self.use_sentence_splitting = use_sentence_splitting
+
+        self.upload_queue = Queue()
+        self.upload_task = None
+        self._start_upload_worker()
 
     def _create_client(self, server_url: str) -> Optional[QdrantClient]:
         """Create and return a Qdrant client."""
@@ -398,8 +406,36 @@ class RAGEngine:
             print(f"Error checking collection '{collection_name}': {e}")
         return False
 
-    def upload_documents(self, documents: List[Dict], collection_name = None, start_index = 0) -> None:
-        """Upload documents to a specific collection in Qdrant with optional sentence splitting."""
+    def _start_upload_worker(self) -> None:
+        """Start background worker thread for document uploads."""
+        def upload_worker():
+            while True:
+                collection_name, documents, start_index = self.upload_queue.get()
+                try:
+                    if documents:
+                        self._upload_documents_internal(documents, collection_name, start_index)
+                except Exception as e:
+                    print(f"ERROR: Upload failed: {str(e)}")
+                finally:
+                    self.upload_queue.task_done()
+
+        self.upload_task = threading.Thread(
+            target=upload_worker,
+            daemon=True
+        )
+        self.upload_task.start()
+
+    def upload_documents(self, documents: List[Dict[str, Any]], 
+                        collection_name: Optional[str] = None,
+                        start_index: int = 0) -> None:
+        """Queue document upload to run in background."""
+        collection_name = collection_name or self.collection_name
+        self.upload_queue.put((collection_name, documents, start_index))
+
+    def _upload_documents_internal(self, documents: List[Dict[str, Any]], 
+                                 collection_name: str,
+                                 start_index: int = 0) -> None:
+        """Internal method for actual document upload processing."""
         coll_name = collection_name or self.collection_name
 
         try:
@@ -425,7 +461,7 @@ class RAGEngine:
             points = []
             point_id = start_index
             
-            for doc_idx, doc in enumerate(tqdm(documents, desc="Chunking documents for upload")):
+            for doc_idx, doc in enumerate(tqdm(deepcopy(documents), desc="Chunking documents for upload")):
                 # Skip empty documents
                 if not (doc.get('title', '').strip() or doc.get('abstract', '').strip() or doc.get('keywords', [])):
                     continue

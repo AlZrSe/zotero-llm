@@ -4,6 +4,9 @@ from dotenv import load_dotenv
 import os
 import sys
 from pathlib import Path
+import threading
+from queue import Queue
+from typing import Optional
 
 # Add the project root to the Python path
 project_root = Path(__file__).resolve().parent.parent
@@ -94,6 +97,10 @@ class ResearchAssistant:
         self.zotero_status = gr.State(False)
         self.qdrant_status = gr.State(False)
         self.llm_status = gr.State(False)
+        
+        # self.upload_task = None
+        # self.upload_queue = Queue()
+        # self._start_upload_worker()
         
         # self._initialize_system()
 
@@ -239,18 +246,18 @@ class ResearchAssistant:
             self.rag.delete_documents(key_ids, collection_name=collection_name)
 
     def upload_documents(self, collection_name: Optional[str] = None) -> None:
-        """Upload documents to the specified collection."""
+        """Queue document upload to run in background."""
         collection_name = collection_name or self.collection_name
-        
         self.debug_print(f"INFO: Uploading documents to collection '{collection_name}'...")
         documents = self.zotero.fetch_all_items()
         if documents:
-            # Populate document cache
             self._populate_document_cache(documents)
             self.rag.upload_documents(documents, collection_name)
-            self.debug_print(f"SUCCESS: Uploaded {len(documents)} documents to '{collection_name}'.")
-        else:
-            self.debug_print("WARNING: No documents found to upload.")
+        self.debug_print(f"INFO: Queued upload for collection '{collection_name}'")
+
+    def is_upload_running(self) -> bool:
+        """Check if document upload is currently in progress."""
+        return self.rag.is_upload_running()
 
     def _ensure_collection_exists(self) -> None:
         """Ensure the main Zotero collection exists in Qdrant."""
@@ -746,6 +753,8 @@ def main():
             server_port=7860,        # Default Gradio port
             share=False              # Create a public link
         )
+        if assistant.rag.is_upload_running():
+            assistant.rag.upload_task.join(timeout=0)
     except Exception as e:
         print(f"Error starting the application: {str(e)}")
 

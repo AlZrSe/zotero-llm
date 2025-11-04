@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 import threading
-from queue import Queue
+from queue import Queue, Empty
 from typing import Optional
 
 # Add the project root to the Python path
@@ -98,11 +98,10 @@ class ResearchAssistant:
         self.qdrant_status = gr.State(False)
         self.llm_status = gr.State(False)
         
-        # self.upload_task = None
-        # self.upload_queue = Queue()
-        # self._start_upload_worker()
-        
-        # self._initialize_system()
+        self.review_queue = Queue()
+        self.review_thread = None
+        self.last_interaction = Queue(1)
+        self._start_review_worker()
 
     def debug_print(self, message: str) -> None:
         """Print a message to both console and debug output."""
@@ -153,7 +152,7 @@ class ResearchAssistant:
         else:
             self.debug_print(f"⚠️ Updating collection '{self.collection_name}'...")
             self.update_collection(self.collection_name, zotero_documents)
-            self.debug_print(f"✅ Collection '{self.collection_name}' updated successfully!")
+            # self.debug_print(f"✅ Collection '{self.collection_name}' updated successfully!")
 
         return success, "\n".join(messages)
 
@@ -285,16 +284,16 @@ class ResearchAssistant:
             "🟢" if llm_ok else "🔴"
         ]
 
-    def get_latest_metrics_markdown(self) -> str:
+    def get_latest_metrics_markdown(self, interaction: Interaction = None) -> str:
         """Return Markdown with LLM-as-a-Judge metrics for the latest interaction."""
         try:
-            interaction = (
-                self.db_session.query(Interaction)
-                .order_by(Interaction.id.desc())
-                .first()
-            )
             if not interaction:
-                return "### LLM-as-a-Judge\nNo metric data available. Ask a question to get an answer evaluation."
+                interaction = self.last_interaction.get(timeout=0)
+
+            if not interaction:
+                return "### LLM-as-a-Judge\nNo metric data available. Waiting for review to complete."
+            # elif self.review_thread or self.review_thread.is_alive():
+            #     return "### LLM-as-a-Judge\n*Processing review analysis...*"
 
             def fmt(value):
                 return "—" if value is None else (f"{value:.3f}" if isinstance(value, (int, float)) else str(value))
@@ -328,6 +327,8 @@ class ResearchAssistant:
                 f"- Hallucination index: {fmt(interaction.hallucination_index)}",
             ]
             return "\n".join(lines)
+        except Empty:
+            return "### LLM-as-a-Judge\nNo metric data available. Waiting for review to complete."
         except Exception as e:
             self.debug_print(f"ERROR: Failed to render metrics: {str(e)}")
             return "### LLM-as-a-Judge\nError rendering metrics."
@@ -552,61 +553,105 @@ class ResearchAssistant:
                 llm_cost = usage_summary['cost_estimate'],
                 llm_response_time = usage_summary['duration']
             )
-
-            if self.llm_review:
-                try:
-                    usage.reset()
-                    messages = self.llm_review.create_messages(query=query, context=context, response=analysis)
-                    review_analysis = self.llm_review.ask_llm(messages)
-                    review_json = extract_json_from_response(review_analysis)
-                    self.debug_print(f"INFO: Review analysis: {json.dumps(review_json, indent=4)}")
-
-                    usage_summary = usage.summarize()
-
-                    interaction.review_llm_model = self.llm_review.model_name
-                    interaction.review_llm_tokens_used = usage_summary['tokens_in'] + usage_summary['tokens_out']
-                    interaction.review_llm_cost = usage_summary['cost_estimate']
-                    interaction.review_llm_response_time = usage_summary['duration']
-
-                    with open(self.log_file, 'a', encoding='utf-8') as log_file:
-                        log_file.write(f"\n\nReview analysis: {json.dumps(review_json, indent=4)}")
-                    
-                    # Store review metrics
-                    if isinstance(review_json, dict):
-                        interaction.summary = review_json.get('summary', None)
-                        interaction.verdict = review_json.get('verdict', None)
-                        if isinstance(review_json.get('metrics'), dict):
-                            metrics_json = review_json['metrics']
-                        else:
-                            metrics_json = review_json
-                        interaction.query_understanding_score = metrics_json.get('query_understanding_score', None)
-                        interaction.retrieval_quality = metrics_json.get('retrieval_quality', None)
-                        interaction.generation_quality = metrics_json.get('generation_quality', None)
-                        interaction.error_detection_score = metrics_json.get('error_detection_score', None)
-                        interaction.citation_integrity = metrics_json.get('citation_integrity', None)
-                        interaction.hallucination_index = metrics_json.get('hallucination_index', None)
-                        if isinstance(review_json.get('strengths'), list):
-                            interaction.strengths = review_json['strengths']
-                        if isinstance(review_json.get('weaknesses'), list):
-                            interaction.weaknesses = review_json['weaknesses']
-                            
-                except Exception as e:
-                    self.debug_print(f"WARNING: Review LLM failed after all retries: {str(e)}")
-                    self.debug_print("INFO: Skipping review analysis and continuing with main response")
-                    # Log the failure but continue processing
-                    with open(self.log_file, 'a', encoding='utf-8') as log_file:
-                        log_file.write(f"\n\nReview LLM failed: {str(e)}")
-
-            # Save to database
-            self.db_session.add(interaction)
-            self.db_session.commit()
-
+            
             self.debug_print("SUCCESS: Query processed successfully")
+            if self.llm_review:
+                self.review_queue.put((query, context, analysis, interaction))
+            else:
+                # No review LLM, store interaction immediately
+                self.db_session.add(interaction)
+                self.db_session.commit()
+            
             return analysis
+
         except Exception as e:
             error_msg = f"Error during analysis: {str(e)}"
             self.debug_print(f"ERROR: {error_msg}")
             return error_msg
+
+    def _start_review_worker(self) -> None:
+        """Start background worker thread for review LLM processing."""
+        def review_worker():
+            while True:
+                try:
+                    # Get review task with timeout to allow thread termination
+                    task = self.review_queue.get(timeout=1)
+                    try:
+                        query, context, analysis, interaction = task
+                        self.process_review(query, context, analysis, interaction)
+                    except Exception as e:
+                        self.debug_print(f"WARNING: Review LLM failed: {str(e)}")
+                    finally:
+                        self.review_queue.task_done()
+                except Empty:
+                    continue
+
+        if self.review_thread is None or not self.review_thread.is_alive():
+            self.review_thread = threading.Thread(
+                target=review_worker,
+                daemon=True
+            )
+            self.review_thread.start()
+
+    def process_review(self, query: str, context: List[Dict],
+                       analysis: str, interaction: Interaction) -> None:
+        """Process review LLM analysis in background."""
+        try:
+            usage.reset()
+            messages = self.llm_review.create_messages(
+                query=query, 
+                context=context, 
+                response=analysis
+            )
+            review_analysis = self.llm_review.ask_llm(messages)
+            review_json = extract_json_from_response(review_analysis)
+            self.debug_print(f"INFO: Review analysis: {json.dumps(review_json, indent=4)}")
+
+            usage_summary = usage.summarize()
+
+            # Update interaction with review metrics
+            interaction.review_llm_model = self.llm_review.model_name
+            interaction.review_llm_tokens_used = usage_summary['tokens_in'] + usage_summary['tokens_out']
+            interaction.review_llm_cost = usage_summary['cost_estimate']
+            interaction.review_llm_response_time = usage_summary['duration']
+
+            # Log review analysis
+            with open(self.log_file, 'a', encoding='utf-8') as log_file:
+                log_file.write(f"\n\nReview analysis: {json.dumps(review_json, indent=4)}")
+            
+            # Store review metrics
+            if isinstance(review_json, dict):
+                interaction.summary = review_json.get('summary', None)
+                interaction.verdict = review_json.get('verdict', None)
+                if isinstance(review_json.get('metrics'), dict):
+                    metrics_json = review_json['metrics']
+                else:
+                    metrics_json = review_json
+                interaction.query_understanding_score = metrics_json.get('query_understanding_score', None)
+                interaction.retrieval_quality = metrics_json.get('retrieval_quality', None)
+                interaction.generation_quality = metrics_json.get('generation_quality', None)
+                interaction.error_detection_score = metrics_json.get('error_detection_score', None)
+                interaction.citation_integrity = metrics_json.get('citation_integrity', None)
+                interaction.hallucination_index = metrics_json.get('hallucination_index', None)
+                if isinstance(review_json.get('strengths'), list):
+                    interaction.strengths = review_json['strengths']
+                if isinstance(review_json.get('weaknesses'), list):
+                    interaction.weaknesses = review_json['weaknesses']
+
+            # Update database
+            self.db_session.add(interaction)
+            self.db_session.commit()
+            
+            # Store the last interaction for metrics and signal completion
+            self.last_interaction.put(interaction)
+                
+        except Exception as e:
+            self.debug_print(f"WARNING: Review LLM failed: {str(e)}")
+
+    def wait_for_review_completion(self) -> str:
+        """Wait for the review LLM to complete processing."""
+        interaction = self.last_interaction.get(block=True)
+        return self.get_latest_metrics_markdown(interaction)
 
     def create_interface(self) -> gr.Blocks:
         """Create and configure the Gradio interface."""
@@ -660,14 +705,15 @@ class ResearchAssistant:
                 left_col = gr.Column(scale=3)
                 right_col = gr.Column(scale=1)
 
-                # Right: Metrics panel (empty at startup)
+                # Right: Metrics panel
                 with right_col:
-                    metrics_panel = gr.Markdown("")
+                    metrics_panel = gr.Markdown(
+                        value=self.get_latest_metrics_markdown()
+                    )
 
-                # Define wrapper that returns answer + metrics based on selected mode
-                def process_query_and_metrics(message, history=None, rag_mode=None):
-                    answer = self.process_query(message, history, rag_mode)
-                    return answer, self.get_latest_metrics_markdown()
+                def refresh_metrics():
+                    """Refresh metrics panel"""
+                    return self.get_latest_metrics_markdown()
                 
                 # Define mode change handler
                 def on_rag_mode_change(mode):
@@ -686,25 +732,28 @@ class ResearchAssistant:
 
                 # Left: Chat interface
                 with left_col:
-                    chat = gr.ChatInterface(
-                        fn=lambda message, history, rag_mode: process_query_and_metrics(
-                            message, 
-                            history,
-                            rag_mode
-                        ),
-                        additional_inputs=[rag_mode_toggle],
+                    chatbot = gr.Chatbot(label="Research Assistant Chat", height=500)
+                    msg = gr.Textbox(
+                        placeholder="Type your question here...",
+                        show_label=False,
+                        container=False,
+                        scale=7,
+                        autofocus=True
+                    )
+                    with gr.Row():
+                        submit_btn = gr.Button("Submit", variant="primary", scale=1)
+                        clear_btn = gr.Button("Clear", variant="secondary", scale=1)
+                    
+                    examples = gr.Examples(
                         examples=[
                             ["What are the main themes in my library about machine learning?"],
                             ["Summarize the recent papers about natural language processing."],
                             ["What are the key findings about deep learning architectures?"]
                         ],
-                        title="Research Assistant Chat",
-                        description="Ask questions about your Zotero library and get AI-powered insights.",
-                        analytics_enabled=False,
-                        autofocus=True,
-                        type="messages",
-                        additional_outputs=[metrics_panel]
+                        inputs=[msg],
+                        label="Example Questions"
                     )
+    
                     # Feedback buttons row
                     with gr.Row():
                         gr.Markdown("**Rate the quality of the answer:**")
@@ -712,6 +761,38 @@ class ResearchAssistant:
                         like_btn = gr.Button("👍 Like", variant="primary", size="sm")
                         dislike_btn = gr.Button("👎 Dislike", variant="secondary", size="sm")
                         feedback_status = gr.Markdown("", visible=False)
+    
+                    def respond(message, chat_history, rag_mode):
+                        chat_history = chat_history + [(message, "Working on it...")]
+                        yield "", chat_history, self.get_latest_metrics_markdown()
+
+                        final_response = self.process_query(message, chat_history[:-1], rag_mode)
+                        chat_history = chat_history[:-1] + [(message, final_response)]
+                        yield "", chat_history, self.get_latest_metrics_markdown()
+    
+                    msg.submit(
+                        fn=respond,
+                        inputs=[msg, chatbot, rag_mode_toggle],
+                        outputs=[msg, chatbot, metrics_panel],
+                        queue=True
+                    ).then(
+                        fn=self.wait_for_review_completion,
+                        inputs=None,
+                        outputs=[metrics_panel]
+                    )
+
+                    submit_btn.click(
+                        fn=respond,
+                        inputs=[msg, chatbot, rag_mode_toggle],
+                        outputs=[msg, chatbot, metrics_panel],
+                        queue=True
+                    ).then(
+                        fn=self.wait_for_review_completion,
+                        inputs=None,
+                        outputs=[metrics_panel]
+                    )
+
+                    clear_btn.click(lambda: ([], self.get_latest_metrics_markdown()), None, [chatbot, metrics_panel], queue=False)
 
             # Feedback button handlers
             def handle_like():

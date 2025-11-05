@@ -22,15 +22,29 @@ class QdrantSearchTool(BaseTool):
     def __init__(self, rag_engine: Any, document_resolver: Optional[Callable] = None):
         super().__init__(rag_engine=rag_engine, document_resolver=document_resolver)
     
-    def _run(self, query: str, limit: int = 5) -> str:
-        """Execute search in Qdrant database.
-        
+    def _run(self, query: str, limit: int) -> str:
+        """Execute search in Qdrant database and return enriched, formatted results.
+
+        This method performs a document search using the configured RAG engine, optionally
+        enriches the results by resolving Zotero keys to full document metadata using the
+        document resolver function, and formats the output into a standardized JSON structure
+        suitable for agent consumption.
+
+        The enrichment process attempts to merge RAG search results with complete document
+        metadata (title, abstract, authors, etc.) when a document resolver is available.
+        If enrichment fails for any document, the original RAG result is used as fallback.
+
         Args:
-            query: The search query
-            limit: Maximum number of documents to return
-            
+            query: The search query string to find relevant documents
+            limit: Maximum number of documents to return from the search
+
         Returns:
-            JSON string with search results
+            JSON string containing a dictionary with:
+            - 'documents': List of formatted document objects with metadata
+            - 'query': The original search query
+            - 'limit': The requested limit parameter
+            - 'total_results': Number of documents returned
+            On error, returns JSON with 'error' key and empty documents list
         """
         try:
             # Use the RAG engine to search documents in Qdrant
@@ -124,20 +138,21 @@ class AgenticRAGEngine:
                - Broad queries ("overview", "survey", "what are") need 8-15 documents
                - Specific queries ("how does X work", specific method/technique) need 3-7 documents
                - Comparative queries ("compare X and Y") need 5-10 documents
-               - IMPORTANT: When searching, use 3x the estimated count as the limit to account for irrelevant results
-            
+               - IMPORTANT: Always specify a limit parameter when using the qdrant_search tool
+
             2. ASSESS RELEVANCE: After retrieving documents, critically evaluate each by:
                - Title relevance: Does the title match the query topic?
                - Abstract relevance: Does the abstract address the query?
                - Keywords relevance: Do keywords align with the query?
-               - Drop documents that are clearly irrelevant to the query
-            
+               - Keep all documents that are relevant
+
             3. ITERATIVE SEARCH (MAXIMUM 3 TOTAL SEARCHES):
-               - First search: Use original query with 3x estimated limit
-               - If relevant documents < estimated count and searches < 3:
-                 * Second search: Try slight variations with 3x estimated limit
-                 * Third search: Try broader formulation with 3x estimated limit
+               - First search: Use original query with appropriate limit
+               - If you need more relevant documents and searches < 3:
+                 * Second search: Try slight variations with appropriate limit
+                 * Third search: Try broader formulation with appropriate limit
                - STOP after 3 searches regardless of results
+               - Always specify limit parameter in qdrant_search calls
             
             You have access to a Qdrant search tool that retrieves documents with full metadata 
             including title, abstract, keywords, authors, year, DOI, and relevance scores.""",
@@ -169,31 +184,31 @@ class AgenticRAGEngine:
             - Analyze the query type and complexity
             - Determine how many documents are needed (3-15 range)
             - Consider: Is it broad/survey? Specific/technical? Comparative?
-            - Calculate search limit: estimated_count * 3 (to account for filtering)
-            
+            - Always specify a limit parameter when using the qdrant_search tool
+
             STEP 2 - INITIAL SEARCH:
             - PRESERVE exact terms, abbreviations, and chemical formulas from the query
-            - Use qdrant_search tool with limit = estimated_count * 3
+            - Use qdrant_search tool with an appropriate limit parameter
             - Retrieve documents with full metadata
-            
+
             STEP 3 - ASSESS RELEVANCE:
             - For each document, evaluate:
               * Title: Does it match the query topic?
               * Abstract: Does it address the research question?
               * Keywords: Are they aligned with the query?
-            - Identify and DROP clearly irrelevant documents
+            - Keep all relevant documents and cut based on estimated count
             - Count how many relevant documents remain
-            
+
             STEP 4 - ITERATIVE SEARCH (MAXIMUM 3 TOTAL SEARCHES):
-            - If relevant documents < estimated count AND total searches < 3:
+            - If you need more relevant documents and searches < 3:
               * Rewrite the query (preserve exact terms/abbreviations/formulas)
-              * Perform additional search with limit = estimated_count * 3
+              * Perform additional search with appropriate limit parameter
               * Assess new results for relevance
               * Repeat once more if still insufficient (max 3 searches total)
             - STOP after 3 searches regardless of results
-            
+
             STEP 5 - RETURN RESULTS:
-            - Return only the relevant documents with full metadata
+            - Return relevant documents up to the estimated count with full metadata
             - Include a summary of your process (estimated count, searches performed, relevance filtering)
             
             The qdrant_search tool will automatically resolve Zotero keys to full document metadata.
@@ -235,14 +250,18 @@ class AgenticRAGEngine:
     
     def _get_enriched_documents(self, query: str, limit: Optional[int] = None) -> List[Dict]:
         """Get enriched documents by searching and resolving Zotero keys.
-        
+
         Args:
             query: The search query
             limit: Maximum number of documents to return
-            
+
         Returns:
             List of enriched documents with full metadata
         """
+        # Use estimated limit if none provided (for fallback cases)
+        if limit is None:
+            limit = self.rag_engine._estimate_optimal_limit(query)
+
         # Use the RAG engine to search documents in Qdrant
         results = self.rag_engine.search_documents(query, limit=limit)
         

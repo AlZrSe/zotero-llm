@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime
 from dotenv import load_dotenv
 import os
@@ -94,6 +95,10 @@ class ResearchAssistant:
         self.zotero_status = gr.State(False)
         self.qdrant_status = gr.State(False)
         self.llm_status = gr.State(False)
+
+        # Limit constants for intelligent estimation
+        self.MIN_LIMIT = 5   # Always get at least 5 documents
+        self.MAX_LIMIT = 50  # Cap at 50 to avoid overwhelming results
         
         # self._initialize_system()
 
@@ -111,6 +116,136 @@ class ResearchAssistant:
         with open("llm_config.json", "r") as f:
             config = json.load(f)
         return config
+
+    def _extract_user_requested_limit(self, query: str) -> Optional[int]:
+        """Extract explicit limit requests from user query (e.g., 'find 10 articles')."""
+        query_lower = query.lower()
+
+        # Patterns for explicit limit requests
+        patterns = [
+            # "find 10 articles", "get 5 papers", "show me 3 studies"
+            r'(?:find|get|show|retrieve|give me)\s+(?:me\s+)?(?:about\s+)?(\d+)\s+(?:articles?|papers?|studies?|documents?|sources?|references?|publications?)\b',
+
+            # "I need 10 articles", "I want 5 papers", "I need exactly 3 papers"
+            r'(?:i\s+(?:need|want|require))\s+(?:exactly\s+)?(\d+)\s+(?:articles?|papers?|studies?|documents?|sources?|references?|publications?)\b',
+
+            # "top 10 articles", "best 5 papers", "latest 3 studies"
+            r'(?:top|best|latest|recent|first)\s+(\d+)\s+(?:articles?|papers?|studies?|documents?|sources?|references?|publications?)\b',
+
+            # "10 articles about", "5 papers on"
+            r'\b(\d+)\s+(?:articles?|papers?|studies?|documents?|sources?|references?|publications?)\s+(?:about|on|regarding|related to)\b',
+
+            # "up to 10 articles", "at most 5 papers"
+            r'(?:up to|at most|maximum of|max)\s+(\d+)\s+(?:articles?|papers?|studies?|documents?|sources?|references?|publications?)\b',
+
+            # "limit to 10", "restrict to 5"
+            r'(?:limit|restrict|cap)\s+(?:to|at)\s+(\d+)\b',
+
+            # "around 10 articles", "approximately 5 papers"
+            r'(?:around|approximately|about|roughly)\s+(\d+)\s+(?:articles?|papers?|studies?|documents?|sources?|references?|publications?)\b',
+
+            # "exactly 10 articles", "precisely 5 papers"
+            r'(?:exactly|precisely|just)\s+(\d+)\s+(?:articles?|papers?|studies?|documents?|sources?|references?|publications?)\b',
+        ]
+
+        for pattern in patterns:
+            matches = re.findall(pattern, query_lower)
+            if matches:
+                try:
+                    # Get the first valid number found
+                    limit = int(matches[0])
+
+                    # Apply reasonable bounds
+                    if 1 <= limit <= 50:  # Allow wider range for explicit requests
+                        return limit
+                    elif limit > 50:
+                        # Cap very large requests but still honor the intent
+                        return 20  # Generous limit for explicit large requests
+                    # Ignore invalid small numbers (0 or negative)
+                except (ValueError, IndexError):
+                    continue
+
+        return None
+
+    def _estimate_optimal_limit(self, query: str, base_limit: int = 5) -> int:
+        """Estimate optimal document limit based on query characteristics.
+
+        This provides intelligent fallback when no user explicit request is detected.
+        Based on the same logic as LimitEstimationTool for consistency.
+        """
+        # Analyze query characteristics
+        query_lower = query.lower()
+        words = query.split()
+
+        # Factors that increase limit
+        complexity_factors = 0
+
+        # 1. Broad vs specific queries
+        broad_terms = ['overview', 'review', 'survey', 'comprehensive', 'systematic', 'meta-analysis',
+                      'state of the art', 'recent advances', 'current trends', 'developments']
+        if any(term in query_lower for term in broad_terms):
+            complexity_factors += 3  # Broad queries need more documents
+
+        # 2. Comparative queries
+        comparative_terms = ['compare', 'comparison', 'versus', 'vs', 'differences', 'similarities',
+                           'contrast', 'alternative', 'approaches', 'methods']
+        if any(term in query_lower for term in comparative_terms):
+            complexity_factors += 2  # Comparisons need multiple perspectives
+
+        # 3. Multi-faceted queries (multiple concepts)
+        question_words = ['what', 'how', 'why', 'when', 'where', 'which']
+        conjunctions = ['and', 'or', 'but', 'as well as', 'along with']
+
+        if len([w for w in words if w.lower() in question_words]) > 1:
+            complexity_factors += 1  # Multiple questions
+
+        if any(conj in query_lower for conj in conjunctions):
+            complexity_factors += 1  # Multiple concepts connected
+
+        # 4. Technical depth indicators
+        technical_terms = ['algorithm', 'model', 'framework', 'architecture', 'implementation',
+                          'methodology', 'technique', 'approach', 'analysis', 'evaluation']
+        if len([w for w in words if w.lower() in technical_terms]) >= 2:
+            complexity_factors += 1  # Technical queries may need more sources
+
+        # 5. Temporal scope
+        temporal_terms = ['recent', 'latest', 'current', 'new', 'emerging', 'future', 'trend']
+        historical_terms = ['history', 'evolution', 'development', 'progress', 'over time']
+
+        if any(term in query_lower for term in temporal_terms):
+            complexity_factors += 1  # Recent work queries
+        elif any(term in query_lower for term in historical_terms):
+            complexity_factors += 2  # Historical queries need broader coverage
+
+        # 6. Query length as complexity indicator
+        if len(words) > 15:
+            complexity_factors += 1  # Long queries are typically complex
+        elif len(words) > 25:
+            complexity_factors += 2  # Very long queries
+
+        # Factors that decrease limit (specific queries)
+        specificity_factors = 0
+
+        # 1. Specific author or paper references
+        if any(word[0].isupper() and len(word) > 3 for word in words):
+            specificity_factors += 1  # Likely author names
+
+        # 2. Very specific technical terms or acronyms
+        acronyms = [w for w in words if w.isupper() and len(w) >= 2]
+        if len(acronyms) >= 2:
+            specificity_factors += 1  # Multiple acronyms suggest specific domain
+
+        # 3. Specific numerical or year references
+        if any(w.isdigit() and len(w) == 4 and 1900 <= int(w) <= 2030 for w in words):
+            specificity_factors += 1  # Year references
+
+        # Calculate final limit
+        estimated_limit = base_limit * max(complexity_factors - specificity_factors, 1)
+
+        # Apply bounds using constants
+        estimated_limit = max(self.MIN_LIMIT, min(self.MAX_LIMIT, estimated_limit))
+
+        return estimated_limit
 
     def _initialize_system(self) -> Tuple[bool, str]:
         """Initialize and test all necessary connections."""
@@ -352,15 +487,29 @@ class ResearchAssistant:
             self.debug_print(f"INFO: Rewriting query: {message}")
             query = self.llm.rewrite_query(message)
             self.debug_print(f"INFO: Processed query: {query}")
-            
+
+            # Estimate limit for Standard RAG
+            if rag_mode == "Standard RAG":
+                # Extract user-requested limit from query
+                user_requested_limit = self._extract_user_requested_limit(query)
+                if user_requested_limit is not None:
+                    final_limit = user_requested_limit
+                    self.debug_print(f"Using user-requested limit: {final_limit} documents")
+                else:
+                    # Use intelligent estimation as fallback
+                    final_limit = self._estimate_optimal_limit(query)
+                    self.debug_print(f"Using intelligent estimated limit: {final_limit} documents")
+            else:
+                final_limit = None  # Agentic RAG handles its own limit estimation
+
             # Use either standard RAG or agentic RAG based on user selection
             if rag_mode == "Agentic RAG" and self.agentic_rag_enabled and self.agentic_rag:
                 # Use agentic RAG search
                 agentic_results = self.agentic_rag.agentic_search(query)
                 context = agentic_results.get("documents", [])
             else:
-                # Use standard RAG search
-                context = self.rag.search_documents(query)
+                # Use standard RAG search with estimated limit
+                context = self.rag.search_documents(query, limit=final_limit)
             
             # Enrich context with full document information from cache
             enriched_context = []
@@ -487,7 +636,7 @@ class ResearchAssistant:
                 if self.agentic_rag_enabled:
                     rag_mode_toggle = gr.Radio(
                         choices=["Standard RAG", "Agentic RAG"],
-                        value="Standard RAG",
+                        value="Agentic RAG",
                         label="RAG Mode",
                         info="Choose between standard retrieval or agentic multi-agent search"
                     )

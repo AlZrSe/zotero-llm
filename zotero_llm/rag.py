@@ -489,43 +489,26 @@ class RAGEngine:
         except Exception as e:
             print(f"Error deleting documents: {e}")
 
-    def search_documents(self, query: str, collection_name = None, limit: Optional[int] = None, 
+    def search_documents(self, query: str, limit: int, collection_name = None,
                         return_metadata: bool = False, deduplicate_documents: bool = True) -> List[Dict]:
         """Search for documents in a specific collection using a query.
-        
+
         Args:
             query: The search query
             collection_name: Collection to search in (optional)
-            limit: Maximum number of documents to return (if None, will check for user request)
+            limit: Maximum number of documents to return
             return_metadata: Whether to return search metadata (limit source, etc.)
             deduplicate_documents: Whether to deduplicate results by DOI when sentence splitting is used
-            
+
         Returns:
             List of documents or dict with documents and metadata if return_metadata=True
         """
         coll_name = collection_name or self.collection_name
-        
-        # Determine the limit to use
+
+        final_limit = limit
+        limit_source = "provided"
         user_requested_limit = None
-        limit_source = "default"
-        
-        if limit is not None:
-            # Manual override provided
-            final_limit = limit
-            limit_source = "manual_override"
-        else:
-            # Check for user-requested limit in query
-            user_requested_limit = self.extract_user_requested_limit(query)
-            if user_requested_limit is not None:
-                final_limit = user_requested_limit
-                limit_source = "user_request"
-                print(f"Using user-requested limit: {final_limit} documents")
-            else:
-                # Use intelligent estimation as fallback
-                final_limit = self._estimate_optimal_limit(query)
-                limit_source = "intelligent_estimation"
-                print(f"Using intelligent estimated limit: {final_limit} documents")
-        
+
         # When using sentence splitting, search for more chunks to ensure good document coverage
         search_limit = final_limit * 5 if self.use_sentence_splitting else final_limit
         

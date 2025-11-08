@@ -485,8 +485,11 @@ class ResearchAssistant:
         try:
             usage.reset()
             self.debug_print(f"INFO: Rewriting query: {message}")
-            query = self.llm.rewrite_query(message)
-            self.debug_print(f"INFO: Processed query: {query}")
+            if rag_mode == 'Standard RAG':
+                query = self.llm.rewrite_query(message)
+                self.debug_print(f"INFO: Processed query: {query}")
+            else:
+                query = message  # No rewriting for Agentic RAG            
 
             # Estimate limit for Standard RAG
             if rag_mode == "Standard RAG":

@@ -1,3 +1,4 @@
+import datetime
 from qdrant_client import QdrantClient, models
 from typing import List, Dict, Optional
 from itertools import batched
@@ -41,7 +42,6 @@ MIN_LIMIT = 5   # Always get at least 3 documents
 MAX_LIMIT = 50  # Cap at 50 to avoid overwhelming results
 
 class RAGEngine:
-
     def __init__(self, collection_name: str,
                  server_url: str = "http://localhost:6333",
                  embedding_model: str = 'jinaai/jina-embeddings-v2-base-en',
@@ -53,6 +53,19 @@ class RAGEngine:
         self.embedding_model_size = embedding_model_size
         self.collection_name = collection_name
         self.use_sentence_splitting = use_sentence_splitting
+        # Add search state dictionary to track previous searches per query
+        self.previous_search_states = {}
+
+    def reset_search_state(self, query: Optional[str] = None):
+        """Reset the search state for a specific query or all queries.
+        
+        Args:
+            query: The query to reset search state for. If None, reset all search states.
+        """
+        if query is None:
+            self.previous_search_states = {}
+        elif query in self.previous_search_states:
+            del self.previous_search_states[query]
 
     def _create_client(self, server_url: str) -> Optional[QdrantClient]:
         """Create and return a Qdrant client."""
@@ -509,6 +522,15 @@ class RAGEngine:
         limit_source = "provided"
         user_requested_limit = None
 
+        # Check if this is a continuation of a previous search for this query
+        is_continuation = False
+        offset = 0
+        search_state_key = f"{query}_{coll_name}"
+        if search_state_key in self.previous_search_states:
+            is_continuation = True
+            # If continuing previous search, use the offset from the previous state
+            offset = self.previous_search_states[search_state_key].get('offset', 0)
+
         # When using sentence splitting, search for more chunks to ensure good document coverage
         search_limit = final_limit * 5 if self.use_sentence_splitting else final_limit
         
@@ -537,6 +559,7 @@ class RAGEngine:
                 query=models.FusionQuery(fusion=models.Fusion.RRF),
                 with_payload=True,
                 limit=search_limit,
+                offset=offset  # Add offset for continuation
             )
             
             # Process results
@@ -557,12 +580,26 @@ class RAGEngine:
                         if len(eval_context) >= final_limit:
                             break
                 
+                # Update search state for potential continuation
+                new_offset = offset + len(results.points)
+                self.previous_search_states[search_state_key] = {
+                    'query': query,
+                    'collection_name': coll_name,
+                    'offset': new_offset,
+                    'timestamp': datetime.datetime.now()
+                }
+                
                 # Add search metadata
                 search_metadata = {
                     "sentence_splitting_enabled": self.use_sentence_splitting,
                     "total_chunks_found": len(results.points),
-                    "unique_documents_returned": len(eval_context)
+                    "unique_documents_returned": len(eval_context),
+                    "is_continuation": is_continuation,
+                    "offset_used": offset
                 }
+                
+                # Log search information
+                print(f"RAGEngine.search_documents: Search for query '{query}' returned {len(eval_context)} documents, continuation: {is_continuation}, offset: {offset}")
                 
                 # Return results with or without metadata
                 if return_metadata:
@@ -588,7 +625,9 @@ class RAGEngine:
                     "search_metadata": {
                         "sentence_splitting_enabled": self.use_sentence_splitting,
                         "total_chunks_found": 0,
-                        "unique_documents_returned": 0
+                        "unique_documents_returned": 0,
+                        "is_continuation": is_continuation,
+                        "offset_used": offset
                     }
                 }
             else:
@@ -607,7 +646,9 @@ class RAGEngine:
                     "search_metadata": {
                         "sentence_splitting_enabled": self.use_sentence_splitting,
                         "total_chunks_found": 0,
-                        "unique_documents_returned": 0
+                        "unique_documents_returned": 0,
+                        "is_continuation": is_continuation,
+                        "offset_used": offset
                     }
                 }
             else:

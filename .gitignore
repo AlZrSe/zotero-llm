@@ -16,3 +16,4 @@ grafana/*
 migrations/versions/__pycache__/*
 tests/*
 qoder.md/*
+agentic.log

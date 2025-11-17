@@ -15,7 +15,8 @@
   },
   "embedding_model": {
     "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-    "embedding_model_size": 384
+    "embedding_model_size": 384,
+    "reranker_model": "zeroentropy/zerank-1"
   },
   "agentic_rag": {
     "enabled": true,

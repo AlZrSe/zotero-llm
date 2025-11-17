@@ -10,6 +10,9 @@ SQLAlchemy==2.0.43
 tqdm==4.67.1
 # Optional: NLTK for improved sentence splitting (fallback to regex if not available)
 nltk==3.9.1
+# Sentence Transformers for reranking functionality
+sentence-transformers>=2.2.0
+torch>=2.0.0
 # CrewAI dependencies for agentic RAG
 crewai
 # crewai-tools

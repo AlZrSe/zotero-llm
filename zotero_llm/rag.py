@@ -40,19 +40,117 @@ except ImportError:
 MIN_LIMIT = 5   # Always get at least 3 documents
 MAX_LIMIT = 50  # Cap at 50 to avoid overwhelming results
 
+# Try to import sentence transformers for reranking
+HAS_RERANKER = False
+try:
+    from sentence_transformers import CrossEncoder
+    import torch
+    HAS_RERANKER = True
+except ImportError:
+    print("Sentence Transformers not available, reranking will not be supported")
+
+class RerankerModel:
+    """Wrapper for cross-encoder reranking models."""
+    
+    def __init__(self, model_name: str, device: str = "auto"):
+        """Initialize reranker model.
+        
+        Args:
+            model_name: Name of the cross-encoder model to use
+            device: Device to run on ('cuda', 'cpu', or 'auto')
+        """
+        if not HAS_RERANKER:
+            raise ImportError("Sentence Transformers library is required for reranking")
+            
+        self.model_name = model_name
+        
+        # Handle device auto-detection
+        if device == 'auto':
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
+            
+        # Initialize the cross-encoder model
+        self.model = CrossEncoder(model_name, device=self.device)
+    
+    def rerank(self, query: str, documents: List[Dict]) -> List[Dict]:
+        """Rerank documents based on their relevance to the query.
+        
+        Args:
+            query: The search query
+            documents: List of documents to rerank
+            
+        Returns:
+            List of reranked documents with updated scores
+        """
+        # Prepare pairs of query and document texts
+        pairs = []
+        doc_texts = []
+        for doc in documents:
+            # Extract text from document
+            doc_text = doc.get('chunk_text', '')
+            if not doc_text:
+                # Fallback to combining title and abstract
+                title = doc.get('title', '')
+                abstract = doc.get('abstract', '')
+                doc_text = f"{title}\n{abstract}".strip()
+            pairs.append([query, doc_text])
+            doc_texts.append(doc_text)
+        
+        # Compute similarity scores
+        scores = self.model.predict(pairs)
+        
+        # Update documents with new scores
+        reranked_docs = []
+        for i, doc in enumerate(documents):
+            doc_copy = doc.copy()
+            doc_copy['score'] = float(scores[i])
+            doc_copy['reranked'] = True
+            reranked_docs.append(doc_copy)
+        
+        # Sort by score in descending order
+        reranked_docs.sort(key=lambda x: x['score'], reverse=True)
+        
+        return reranked_docs
+
 class RAGEngine:
 
     def __init__(self, collection_name: str,
                  server_url: str = "http://localhost:6333",
                  embedding_model: str = 'jinaai/jina-embeddings-v2-base-en',
                  embedding_model_size: int = 768,
-                 use_sentence_splitting: bool = True):
-        """Initialize RAG engine with Qdrant client."""
+                 use_sentence_splitting: bool = True,
+                 reranker_model: Optional[str] = None):
+        """Initialize RAG engine with Qdrant client.
+        
+        Args:
+            collection_name: Name of the Qdrant collection
+            server_url: URL of the Qdrant server
+            embedding_model: Name of the embedding model to use
+            embedding_model_size: Size of the embedding vectors
+            use_sentence_splitting: Whether to split documents into sentences
+            reranker_model: Optional reranker model name for result reranking
+        """
         self.client = self._create_client(server_url)
         self.embedding_model_name = embedding_model
         self.embedding_model_size = embedding_model_size
         self.collection_name = collection_name
         self.use_sentence_splitting = use_sentence_splitting
+        self.reranker_model = reranker_model
+        
+        # Initialize reranker model if specified
+        if reranker_model:
+            if not HAS_RERANKER:
+                print("Warning: Sentence Transformers not available, reranking will be disabled")
+                self.reranker = None
+            else:
+                try:
+                    self.reranker = RerankerModel(reranker_model)
+                except Exception as e:
+                    print(f"Warning: Failed to initialize reranker model: {e}")
+                    self.reranker = None
+        else:
+            self.reranker = None
 
     def _create_client(self, server_url: str) -> Optional[QdrantClient]:
         """Create and return a Qdrant client."""
@@ -489,6 +587,30 @@ class RAGEngine:
         except Exception as e:
             print(f"Error deleting documents: {e}")
 
+    def rerank_documents(self, query: str, documents: List[Dict]) -> List[Dict]:
+        """Rerank documents based on their relevance to the query using the configured reranker model.
+        
+        Args:
+            query: The search query
+            documents: List of documents to rerank
+            
+        Returns:
+            List of reranked documents with updated scores, sorted by relevance
+        """
+        # Apply reranking if a reranker model is specified and available
+        if self.reranker and self.reranker_model:
+            try:
+                # Rerank the documents
+                print(f"Reranking documents using model '{self.reranker_model}'")
+                reranked_documents = self.reranker.rerank(query, documents)
+                return reranked_documents
+            except Exception as e:
+                print(f"Warning: Reranking failed, using original results: {e}")
+                return documents
+        else:
+            # No reranker configured, return documents as-is
+            return documents
+
     def search_documents(self, query: str, collection_name = None, limit: Optional[int] = None, 
                         return_metadata: bool = False, deduplicate_documents: bool = True) -> List[Dict]:
         """Search for documents in a specific collection using a query.
@@ -528,6 +650,7 @@ class RAGEngine:
         
         # When using sentence splitting, search for more chunks to ensure good document coverage
         search_limit = final_limit * 5 if self.use_sentence_splitting else final_limit
+        search_limit = search_limit * 3 if self.reranker and self.reranker_model else search_limit
         
         try:
             results = self.client.query_points(
@@ -561,24 +684,34 @@ class RAGEngine:
                 eval_context = []
                 seen_keys = set()
                 
+                # Convert points to documents
+                raw_documents = []
                 for point in results.points:
                     # Extract the Zotero key from payload
                     zotero_key = point.payload.get('zotero_key', '')
                     if zotero_key and zotero_key not in seen_keys:
                         # Return the payload with the score
                         point.payload['score'] = point.score
-                        eval_context.append(point.payload)
+                        raw_documents.append(point.payload)
                         seen_keys.add(zotero_key)
                         
-                        # Stop when we have enough unique documents
-                        if len(eval_context) >= final_limit:
+                        # Stop when we have enough unique documents for initial filtering
+                        if len(raw_documents) >= search_limit:
                             break
+                
+                # Apply reranking if configured
+                documents_to_return = self.rerank_documents(query, raw_documents)
+                
+                # Select top documents based on final limit
+                eval_context = documents_to_return[:final_limit]
                 
                 # Add search metadata
                 search_metadata = {
                     "sentence_splitting_enabled": self.use_sentence_splitting,
                     "total_chunks_found": len(results.points),
-                    "unique_documents_returned": len(eval_context)
+                    "unique_documents_returned": len(eval_context),
+                    "reranker_model": self.reranker_model,
+                    "reranking_applied": self.reranker is not None and self.reranker_model is not None
                 }
                 
                 # Return results with or without metadata
@@ -605,7 +738,9 @@ class RAGEngine:
                     "search_metadata": {
                         "sentence_splitting_enabled": self.use_sentence_splitting,
                         "total_chunks_found": 0,
-                        "unique_documents_returned": 0
+                        "unique_documents_returned": 0,
+                        "reranker_model": self.reranker_model,
+                        "reranking_applied": self.reranker is not None and self.reranker_model is not None
                     }
                 }
             else:
@@ -624,7 +759,9 @@ class RAGEngine:
                     "search_metadata": {
                         "sentence_splitting_enabled": self.use_sentence_splitting,
                         "total_chunks_found": 0,
-                        "unique_documents_returned": 0
+                        "unique_documents_returned": 0,
+                        "reranker_model": self.reranker_model,
+                        "reranking_applied": self.reranker is not None and self.reranker_model is not None
                     }
                 }
             else:

@@ -52,7 +52,8 @@ class ResearchAssistant:
             'server_url': embedding_config.get('server_url', f'http://{os.getenv("QDRANT_HOST", "localhost")}:{os.getenv("QDRANT_PORT", "6333")}'),
             'embedding_model': embedding_config.get('embedding_model', 'jinaai/jina-embeddings-v2-base-en'),
             'embedding_model_size': embedding_config.get('embedding_model_size', 768),
-            'use_sentence_splitting': embedding_config.get('use_sentence_splitting', True)
+            'use_sentence_splitting': embedding_config.get('use_sentence_splitting', True),
+            'reranker_model': embedding_config.get('reranker_model', None)
         }
 
         self.rag = RAGEngine(**rag_params)

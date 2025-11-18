@@ -73,6 +73,8 @@ class RerankerModel:
             
         # Initialize the cross-encoder model
         self.model = CrossEncoder(model_name, device=self.device)
+        # Set pad token ID to avoid errors
+        self.model.config.pad_token_id = self.model.tokenizer.pad_token_id
     
     def rerank(self, query: str, documents: List[Dict]) -> List[Dict]:
         """Rerank documents based on their relevance to the query.

@@ -44,11 +44,17 @@ MAX_LIMIT = 50  # Cap at 50 to avoid overwhelming results
 class RAGEngine:
     def __init__(self, collection_name: str,
                  server_url: str = "http://localhost:6333",
+                 api_key: Optional[str] = None,
+                 https: bool = False,
+                 port: Optional[int] = None,
+                 grpc_port: Optional[int] = None,
+                 prefer_grpc: bool = False,
+                 timeout: int = 60,
                  embedding_model: str = 'jinaai/jina-embeddings-v2-base-en',
                  embedding_model_size: int = 768,
                  use_sentence_splitting: bool = True):
         """Initialize RAG engine with Qdrant client."""
-        self.client = self._create_client(server_url)
+        self.client = self._create_client(server_url, api_key, https, port, grpc_port, prefer_grpc, timeout)
         self.embedding_model_name = embedding_model
         self.embedding_model_size = embedding_model_size
         self.collection_name = collection_name
@@ -67,10 +73,42 @@ class RAGEngine:
         elif query in self.previous_search_states:
             del self.previous_search_states[query]
 
-    def _create_client(self, server_url: str) -> Optional[QdrantClient]:
-        """Create and return a Qdrant client."""
+    def _create_client(self, server_url: str, api_key: Optional[str] = None, https: bool = True,
+                    port: Optional[int] = 6333, grpc_port: Optional[int] = None, prefer_grpc: bool = False,
+                    timeout: int = 60) -> Optional[QdrantClient]:
+        """Create and return a Qdrant client with support for cloud connections."""
         try:
-            return QdrantClient(server_url)
+            # Parse URL to extract host if needed
+            from urllib.parse import urlparse
+            parsed_url = urlparse(server_url)
+            
+            # Determine if this is a cloud connection (contains .cloud.qdrant.io)
+            is_cloud = '.cloud.qdrant.io' in server_url
+            
+            if is_cloud and api_key:
+                # For cloud connections, we need to use the url parameter and api_key
+                client = QdrantClient(
+                    url=server_url,
+                    api_key=api_key,
+                    https=True,  # Cloud connections always use HTTPS
+                    timeout=timeout  # Set appropriate timeout for cloud operations
+                )
+            elif api_key:
+                # For self-hosted with API key
+                client = QdrantClient(
+                    url=server_url,
+                    api_key=api_key,
+                    https=https,
+                    port=port,
+                    grpc_port=grpc_port,
+                    prefer_grpc=prefer_grpc,
+                    timeout=timeout  # Set timeout for operations
+                )
+            else:
+                # For local connections
+                client = QdrantClient(server_url, timeout=timeout)
+            
+            return client
         except Exception as e:
             print(f"Error creating Qdrant client: {e}")
             return None

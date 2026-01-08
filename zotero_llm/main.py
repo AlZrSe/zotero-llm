@@ -50,7 +50,13 @@ class ResearchAssistant:
         # Extract RAG-specific parameters
         rag_params = {
             'collection_name': self.collection_name,
-            'server_url': embedding_config.get('server_url', f'http://{os.getenv("QDRANT_HOST", "localhost")}:{os.getenv("QDRANT_PORT", "6333")}'),
+            'server_url': embedding_config.get('server_url', os.getenv("QDRANT_SERVER_URL", f'http://{os.getenv("QDRANT_HOST", "localhost")}:{os.getenv("QDRANT_PORT", "6333")}')),
+            'api_key': embedding_config.get('api_key', os.getenv("QDRANT_API_KEY")),
+            'https': embedding_config.get('https', os.getenv("QDRANT_HTTPS", "false").lower() == "true"),
+            'port': embedding_config.get('port', int(os.getenv("QDRANT_PORT")) if os.getenv("QDRANT_PORT", None) else 6333),
+            'grpc_port': embedding_config.get('grpc_port', int(os.getenv("QDRANT_GRPC_PORT")) if os.getenv("QDRANT_GRPC_PORT", None) else None),
+            'prefer_grpc': embedding_config.get('prefer_grpc', os.getenv("QDRANT_PREFER_GRPC", "false").lower() == "true"),
+            'timeout': embedding_config.get('timeout', int(os.getenv("QDRANT_TIMEOUT", 60))),
             'embedding_model': embedding_config.get('embedding_model', 'jinaai/jina-embeddings-v2-base-en'),
             'embedding_model_size': embedding_config.get('embedding_model_size', 768),
             'use_sentence_splitting': embedding_config.get('use_sentence_splitting', True)

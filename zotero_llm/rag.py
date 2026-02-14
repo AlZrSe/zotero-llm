@@ -55,6 +55,7 @@ class RAGEngine:
                  use_sentence_splitting: bool = True):
         """Initialize RAG engine with Qdrant client."""
         self.client = self._create_client(server_url, api_key, https, port, grpc_port, prefer_grpc, timeout)
+        self.server_url = server_url
         self.embedding_model_name = embedding_model
         self.embedding_model_size = embedding_model_size
         self.collection_name = collection_name
@@ -699,3 +700,7 @@ class RAGEngine:
             return True
         except Exception:
             return False
+    
+    def is_local_server(self) -> bool:
+        """Check if the Qdrant server is a local server or remote/cloud."""
+        return '.cloud.qdrant.io' not in self.server_url and ('localhost' in self.server_url or '127.0.0.1' in self.server_url)

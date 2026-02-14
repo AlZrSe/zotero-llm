@@ -270,7 +270,8 @@ class ResearchAssistant:
             self.debug_print("❌ Failed to connect to Qdrant.")
             success = False
         else:
-            self.debug_print("✅ Connected to local Qdrant server successfully!")
+            server_type = "local" if self.rag.is_local_server() else "remote"
+            self.debug_print(f"✅ Connected to {server_type} Qdrant server successfully!")
 
         # Check what count of documents is equal to Zotero items count
         zotero_documents = self.zotero.fetch_all_items() or []

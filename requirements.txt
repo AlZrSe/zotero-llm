@@ -11,5 +11,5 @@ tqdm==4.67.1
 # Optional: NLTK for improved sentence splitting (fallback to regex if not available)
 nltk==3.9.1
 # CrewAI dependencies for agentic RAG
-crewai
+crewai==0.95.0
 # crewai-tools

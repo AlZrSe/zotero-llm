@@ -47,7 +47,25 @@ Each block have parameters:
     - `embedding_model`: The model to use for generating embeddings (e.g., "jinaai/jina-embeddings-v2-base-en")
     - `embedding_model_size`: Dimension size of the embedding vectors (e.g., 768)
 
-6. Install Grafana for visualization of metrics:
+6. Configure Qdrant (Local or Cloud):
+
+**For Local Qdrant (default setup):**
+- No additional configuration needed. The application will connect to a local Qdrant instance.
+
+**For Qdrant Cloud:**
+- Sign up at [Qdrant Cloud](https://cloud.qdrant.io/signup) and create a cluster
+- In your `.env` file, configure the following variables:
+```bash
+QDRANT_SERVER_URL=https://your-cluster.cloud.qdrant.io
+QDRANT_API_KEY=your-api-key-here
+QDRANT_HTTPS=true
+QDRANT_TIMEOUT=60
+```
+- Comment out the local Qdrant variables (`QDRANT_HOST` and `QDRANT_PORT`) in `.env`
+- The application will automatically detect the cloud configuration and connect using the API key
+- The `QDRANT_TIMEOUT` variable allows you to adjust the timeout for operations (default is 60 seconds), which can help with "write operation timed out" errors when uploading documents to Qdrant Cloud
+
+7. Install Grafana for visualization of metrics:
 - Run Grafana docker image by command:
 ```bash
 docker run -d -p 3000:3000 --name=grafana --volume "$PWD/grafana:/var/lib/grafana" grafana/grafana-enterprise
@@ -70,7 +88,7 @@ Due Zotero Desktop local connection limitation, there isn't able to add it to `d
 ```bash
 docker-compose up -d --build
 ```
-then make a config of Grafana as mentioned in p.6 above.
+then make a config of Grafana as mentioned in p.7 above.
 
 ## Usage
 
@@ -78,19 +96,29 @@ then make a config of Grafana as mentioned in p.6 above.
 
 1. Run Zotero Desktop
 
-2. Run Qdrant and Grafana Docker images:
+2. Run Grafana Docker image:
 
 ```bash
-docker run -d -p 6333:6333 -p 6334:6334 -v "qdrant_storage:/qdrant/storage" qdrant/qdrant
 docker run -d -p 3000:3000 --name=grafana --volume "$PWD/grafana:/var/lib/grafana" grafana/grafana-enterprise
 ```
 
-3. Run the main script:
+3. Run Qdrant (Local or Cloud):
+
+**For Local Qdrant:**
+```bash
+docker run -d -p 6333:6333 -p 6334:6334 -v "qdrant_storage:/qdrant/storage" qdrant/qdrant
+```
+
+**For Qdrant Cloud:**
+- Configure your Qdrant Cloud settings in the `.env` file as described in the Setup section
+- No need to run a local Qdrant container
+
+4. Run the main script:
 ```bash
 python zotero_llm/main.py
 ```
 
-4. Go to [http://0.0.0.0:7860](http://0.0.0.0:7860) to open web interface and start querying.
+5. Go to [http://0.0.0.0:7860](http://0.0.0.0:7860) to open web interface and start querying.
 
 
 ### 2. Docker compose
@@ -225,6 +253,8 @@ The system is considered "Valid" when it:
 - Maintains high citation integrity
 - Shows minimal hallucination
 - Demonstrates good query understanding and context usage
+
+
 
 ## License
 
